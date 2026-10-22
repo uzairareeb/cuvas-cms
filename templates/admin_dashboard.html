@@ -1,0 +1,15 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Admin Dashboard</h2><p class="muted">Welcome, {{ session.display_name }} — demo overview of MY CUVAS.</p>
+<div class="grid">
+<div class="card kpi"><div class="num">{{ kpis.students }}</div><div class="lbl">Students</div></div>
+<div class="card kpi teal"><div class="num">{{ kpis.departments }}</div><div class="lbl">Departments</div></div>
+<div class="card kpi gold"><div class="num">{{ kpis.programs }}</div><div class="lbl">Programs</div></div>
+<div class="card kpi red"><div class="num">{{ kpis.pending_vouchers }}</div><div class="lbl">Pending Vouchers</div></div>
+</div>
+<h3 style="margin-top:26px">Pending Vouchers</h3>
+<table><tr><th>Challan #</th><th>Student</th><th>Title</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th></tr>
+{% for v in pending %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}</td><td>{{ v.title }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="pill pending">{{ v.status }}</span></td></tr>{% else %}<tr><td colspan="6">No pending vouchers.</td></tr>{% endfor %}</table>
+<h3 style="margin-top:26px">Recent Students</h3>
+<table><tr><th>Reg. No</th><th>Name</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th></tr>
+{% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td></tr>{% endfor %}</table>
+{% endblock %}

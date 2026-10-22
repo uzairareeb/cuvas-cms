@@ -1,0 +1,5 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Departments</h2>
+<table><tr><th>Code</th><th>Department</th><th>Faculty</th><th>Programs</th><th>Students</th></tr>
+{% for d in rows %}<tr><td>{{ d.code }}</td><td>{{ d.name }}</td><td>{{ d.faculty_name }}</td><td>{{ d.prog_count }}</td><td>{{ d.stu_count }}</td></tr>{% endfor %}</table>
+{% endblock %}

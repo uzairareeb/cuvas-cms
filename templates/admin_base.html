@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block body %}<div class="layout">
+<aside class="sidebar"><a href="{{ url_for('admin_dashboard') }}">🏠 Dashboard</a>
+<a href="{{ url_for('admin_departments') }}">🏛 Departments</a>
+<a href="{{ url_for('admin_programs') }}">🎓 Programs</a>
+<a href="{{ url_for('logout') }}">🚪 Sign out</a></aside>
+<main class="main">{% block admin_body %}{% endblock %}</main></div>{% endblock %}

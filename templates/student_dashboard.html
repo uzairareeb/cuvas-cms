@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<h2>Student Dashboard — {{ student.name }}</h2>
+<p class="muted">{{ student.registration_no }} · {{ student.prog }} · {{ student.dept }} · Semester {{ student.current_semester }} · {{ student.session_name }}</p>
+
+<div class="tabs" id="tabs">
+  <button class="tab-btn" data-tab="news">News Feed</button>
+  <button class="tab-btn" data-tab="profile">Profile</button>
+  <button class="tab-btn" data-tab="enrollments">Course Enrollments</button>
+  <button class="tab-btn" data-tab="plan">Plan Of Study</button>
+  <button class="tab-btn" data-tab="transcript">Transcript</button>
+  <button class="tab-btn" data-tab="voucher">Financial Voucher</button>
+  <button class="tab-btn" data-tab="feeplan">Fee Plan &amp; Scholarships</button>
+  <button class="tab-btn" data-tab="statement">Account Statement</button>
+</div>
+
+<section class="tab-pane" id="pane-news"><div class="grid">
+{% for n in news %}<div class="card"><h3>{{ n.title }}</h3><p>{{ n.body }}</p><p class="muted">{{ n.published_at }}</p></div>{% endfor %}
+</div></section>
+
+<section class="tab-pane" id="pane-profile"><div class="card">
+<h3>Personal &amp; Academic Profile</h3>
+<table>
+<tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
+<tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>Gender</th><td>{{ student.gender }}</td></tr>
+<tr><th>Date of Birth</th><td>{{ student.dob }}</td><th>Phone</th><td>{{ student.phone }}</td></tr>
+<tr><th>Email</th><td>{{ student.email }}</td><th>Campus</th><td>{{ student.campus }}</td></tr>
+<tr><th>Department</th><td>{{ student.dept }}</td><th>Program</th><td>{{ student.prog }}</td></tr>
+<tr><th>Session</th><td>{{ student.session_name }}</td><th>Status</th><td>{{ student.status }}</td></tr>
+<tr><th>Address</th><td colspan="3">{{ student.address }}</td></tr>
+</table>
+<h4>Previous Qualifications / Certificates</h4>
+<table><tr><th>Title</th><th>Board / University</th><th>Passing Year</th><th>Total Marks</th><th>Obtained Marks</th></tr>
+{% for c in certs %}<tr><td>{{ c.title }}</td><td>{{ c.board }}</td><td>{{ c.passing_year }}</td><td>{{ c.total_marks }}</td><td>{{ c.obtained_marks }}</td></tr>{% endfor %}</table>
+</div></section>
+
+<section class="tab-pane" id="pane-enrollments"><div class="card"><h3>Course Enrollments — Semester {{ student.current_semester }}</h3>
+<table><tr><th>SR</th><th>Semester Session</th><th>Course Code</th><th>Course</th><th>Faculty</th><th>Credit Hours (Theory-Lab)</th></tr>
+{% for e in enrollments %}<tr><td>{{ loop.index }}</td><td>{{ e.session_name }}</td><td>{{ e.code }}</td><td>{{ e.title }}</td><td>{{ e.faculty_name }}</td><td>{{ e.credit_theory }}-{{ e.credit_lab }}</td></tr>{% endfor %}</table></div></section>
+
+<section class="tab-pane" id="pane-plan"><div class="card"><h3>Plan Of Study</h3>
+<p>Total plan credit hours: <strong>{{ plan_hours.values()|sum }}</strong> · Fulfilled: <strong>{{ fulfilled_hours }}</strong></p>
+{% for sem, rows in plan.items() %}<h4>Semester {{ sem }} ({{ plan_hours[sem] }} credit hours)</h4>
+<table><tr><th>Code</th><th>Course</th><th>Credit Hours (Theory-Lab)</th></tr>
+{% for c in rows %}<tr><td>{{ c.code }}</td><td>{{ c.title }}</td><td>{{ c.credit_theory }}-{{ c.credit_lab }}</td></tr>{% endfor %}</table>{% endfor %}
+</div></section>
+
+<section class="tab-pane" id="pane-transcript"><div class="card"><h3>Transcript</h3>
+<p>Overall CGPA: <strong>{{ cgpa }}</strong></p>
+{% for sem, block in transcript.items() %}<h4>Semester {{ sem }} — SGPA: {{ block.sgpa }} · CGPA: {{ block.cgpa }}</h4>
+<table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
+{% for r in block.rows %}<tr><td>{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.credits }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}</td></tr>{% endfor %}</table>{% endfor %}
+</div></section>
+
+<section class="tab-pane" id="pane-voucher"><div class="card"><h3>Financial Vouchers</h3>
+<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th></tr>
+{% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="pill {{ 'paid' if v.status=='Paid' else 'pending' }}">{{ v.status }}</span></td><td>{{ v.remarks }}</td></tr>{% endfor %}</table></div></section>
+
+<section class="tab-pane" id="pane-feeplan"><div class="grid">
+<div class="card"><h3>Fee Plan — Semester {{ student.current_semester }}</h3>
+<table><tr><th>Fee Head</th><th>Amount (Rs)</th></tr>
+{% for f in fee_lines %}<tr><td>{{ f.head }}</td><td>{{ "{:,}".format(f.amount) }}</td></tr>{% endfor %}
+<tr><th>Total</th><th>{{ "{:,}".format(fee_total) }}</th></tr></table></div>
+<div class="card"><h3>Scholarships</h3><p>No scholarship awarded yet (Demo).</p><p class="muted">Demo Merit Scholarship — applications open in a later phase.</p></div>
+<div class="card"><h3>Remarks</h3><p>Fee plan is generated per program &amp; semester (Demo). Scholarships, when awarded, will reflect here and in the Account Statement.</p></div>
+</div></section>
+
+<section class="tab-pane" id="pane-statement"><div class="card"><h3>Account Statement</h3>
+<table><tr><th>Voucher Title</th><th>Challan No.</th><th>Date</th><th>Description</th><th>Charged (Rs)</th><th>Paid (Rs)</th></tr>
+{% for l in ledger %}<tr><td>{{ l.voucher_title }}</td><td>{{ l.challan_no }}</td><td>{{ l.entry_date }}</td><td>{{ l.description }}</td><td>{{ "{:,}".format(l.debit) if l.debit else '—' }}</td><td>{{ "{:,}".format(l.credit) if l.credit else '—' }}</td></tr>{% endfor %}</table>
+<p style="margin-top:14px">Payable: <strong>Rs {{ "{:,}".format(payable) }}</strong> · Paid: <strong>Rs {{ "{:,}".format(paid) }}</strong> · Remission: <strong>Rs 0</strong> · Outstanding: <strong>Rs {{ "{:,}".format(outstanding) }}</strong></p>
+</div></section>
+</div>
+<script>
+var active = {{ active_tab|tojson }};
+var valid = ['news','profile','enrollments','plan','transcript','voucher','feeplan','statement'];
+function show(t){ if(valid.indexOf(t)<0) t='news';
+ document.querySelectorAll('.tab-pane').forEach(function(p){p.classList.remove('active')});
+ document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active', b.dataset.tab===t)});
+ document.getElementById('pane-'+t).classList.add('active'); }
+document.querySelectorAll('.tab-btn').forEach(function(b){ b.addEventListener('click', function(){ show(b.dataset.tab); }); });
+show(active);
+</script>
+{% endblock %}

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}MY CUVAS — Campus Management System (Demo){% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body>
+<header class="topbar"><div class="brand">MY <span>CUVAS</span> <span class="badge">DEMO</span></div>
+<nav>{% if session.get('user_id') %}<span>{{ session.display_name }} ({{ session.role }})</span><a href="{{ url_for('logout') }}">Sign out</a>{% else %}<a href="{{ url_for('landing') }}">Home</a><a href="{{ url_for('login') }}">Login</a>{% endif %}</nav></header>
+{% with msgs = get_flashed_messages() %}{% if msgs %}<div class="wrap">{% for m in msgs %}<div class="flash">{{ m }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+{% block body %}{% endblock %}
+<footer>MY CUVAS — Campus Management System (Demo) v0.1 · Cholistan University of Veterinary and Animal Sciences · All data shown is fictional demo data.</footer>
+</body></html>
