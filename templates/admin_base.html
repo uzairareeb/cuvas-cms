@@ -1,15 +1,38 @@
 {% extends "base.html" %}
-{% block body %}<div class="layout">
-<aside class="sidebar"><a href="{{ url_for('admin_dashboard') }}">🏠 Dashboard</a>
-<a href="{{ url_for('admin_students') }}">🧑‍🎓 Students</a>
-<a href="{{ url_for('admin_departments') }}">🏛 Departments</a>
-<a href="{{ url_for('admin_programs') }}">🎓 Programs</a>
-<a href="{{ url_for('admin_sessions') }}">🗓 Sessions</a>
-<a href="{{ url_for('admin_courses') }}">📚 Courses</a>
-<a href="{{ url_for('admin_fee_heads') }}">💰 Fee Heads</a>
-<a href="{{ url_for('admin_fee_plans') }}">🧾 Fee Plans</a>
-<a href="{{ url_for('admin_vouchers') }}">🎫 Vouchers</a>
-<a href="{{ url_for('admin_results') }}">📝 Results</a>
-<a href="{{ url_for('admin_grade_scale') }}">⚖ Grade Scale</a>
-<a href="{{ url_for('logout') }}">🚪 Sign out</a></aside>
-<main class="main">{% block admin_body %}{% endblock %}</main></div>{% endblock %}
+{% block header %}{% endblock %}
+{% block flashes %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block body %}{% set ep = request.endpoint or '' %}<div class="layout">
+<aside class="sidebar">
+<div class="sidebar-head"><span class="logo-box">CUVAS</span><div class="logo-sub">Cholistan University of Veterinary<br>and Animal Sciences, Bahawalpur</div></div>
+<nav>
+<a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if ep=='admin_dashboard' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9.5 21v-6h5v6"/></svg>Dashboard</a>
+<div class="nav-sec">Student Management</div>
+<a href="{{ url_for('admin_students') }}" class="{{ 'active' if ep in ['admin_students','admin_student_new','admin_student_edit','admin_students_import'] else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M15.5 5.2a3.4 3.4 0 0 1 0 5.9"/><path d="M17.8 15.4c1.6.7 2.5 2.2 2.8 4.6"/></svg>Students</a>
+<a href="{{ url_for('admin_vouchers') }}" class="{{ 'active' if ep.startswith('admin_voucher') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M15 7v11" stroke-dasharray="2.5 2.8"/><path d="M6.5 11h4M6.5 14h4"/></svg>Fee Vouchers</a>
+<a href="{{ url_for('admin_results') }}" class="{{ 'active' if ep.startswith('admin_results') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="4.5" width="13" height="17" rx="2"/><path d="M9 4.5a3 3 0 0 1 6 0"/><path d="m9 14.5 2.2 2.2 4.3-4.7"/></svg>Results</a>
+<div class="nav-sec">Academic</div>
+<a href="{{ url_for('admin_departments') }}" class="{{ 'active' if ep.startswith('admin_department') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h7A1.5 1.5 0 0 1 15 4.5V21"/><path d="M15 9.5h2.5A1.5 1.5 0 0 1 19 11v10"/><path d="M3 21h18"/><path d="M8.5 7h3M8.5 11h3M8.5 15h3"/></svg>Departments</a>
+<a href="{{ url_for('admin_programs') }}" class="{{ 'active' if ep.startswith('admin_program') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 9.3 9.5-4.8 9.5 4.8-9.5 4.8z"/><path d="M6.3 11.4v4.8c0 1.4 2.6 2.8 5.7 2.8s5.7-1.4 5.7-2.8v-4.8"/><path d="M21.5 9.3v5"/></svg>Programs</a>
+<a href="{{ url_for('admin_courses') }}" class="{{ 'active' if ep.startswith('admin_course') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>Courses</a>
+<a href="{{ url_for('admin_sessions') }}" class="{{ 'active' if ep.startswith('admin_session') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Sessions</a>
+<div class="nav-sec">Finance</div>
+<a href="{{ url_for('admin_fee_heads') }}" class="{{ 'active' if ep.startswith('admin_fee_head') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 6.8v10.4M14.8 9.2c-.6-.9-1.6-1.3-2.8-1.3-1.6 0-2.8.9-2.8 2.1 0 2.9 5.7 1.6 5.7 4.1 0 1.2-1.3 2.1-2.9 2.1-1.3 0-2.4-.5-3-1.5"/></svg>Fee Heads</a>
+<a href="{{ url_for('admin_fee_plans') }}" class="{{ 'active' if ep.startswith('admin_fee_plan') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4L10 21l-2-1.4L6 21z"/><path d="M9.5 8h5M9.5 12h5"/></svg>Fee Plans</a>
+<div class="nav-sec">System</div>
+<a href="{{ url_for('admin_grade_scale') }}" class="{{ 'active' if ep.startswith('admin_grade_scale') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5V21M8 21h8"/><path d="M12 6.5H5.5M12 6.5h6.5"/><path d="M5.5 6.5 3 13a3.2 3.2 0 0 0 5 0L5.5 6.5zM18.5 6.5 16 13a3.2 3.2 0 0 0 5 0l-2.5-6.5z"/></svg>Grade Scale</a>
+</nav>
+<div class="sidebar-foot"><strong>CUVAS</strong>Cholistan University of Veterinary and Animal Sciences, Bahawalpur<br>Campus Management System | v1.0</div>
+</aside>
+<div class="admin-col">
+<header class="admin-topbar">
+<div class="topsearch"><form method="get" action="{{ url_for('admin_students') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.6-4.6"/></svg><input name="q" placeholder="Search students, courses, faculty..." aria-label="Search students"></form></div>
+<div class="top-icons">
+<a class="icon-btn" href="{{ url_for('admin_vouchers') }}" title="Fee vouchers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 1 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg></a>
+<a class="icon-btn" href="{{ url_for('admin_dashboard') }}" title="Dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/></svg></a>
+</div>
+<div class="user-chip"><div class="avatar">{{ (session.display_name or 'A')[:1] }}</div><div class="user-meta"><div class="uname">{{ session.display_name }}</div><div class="urole">System Administrator</div></div><a class="logout-link" href="{{ url_for('logout') }}">Logout</a></div>
+</header>
+<main class="main">{% with msgs = get_flashed_messages(with_categories=true) %}{% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}{% endwith %}{% block admin_body %}{% endblock %}</main>
+<div class="admin-foot"><span>© 2026 Cholistan University of Veterinary and Animal Sciences. All rights reserved.</span><span>Campus Management System | v1.0</span></div>
+</div></div>{% endblock %}

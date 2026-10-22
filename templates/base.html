@@ -3,9 +3,9 @@
 <title>{% block title %}MY CUVAS — Campus Management System (Demo){% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
 <body>
-<header class="topbar"><div class="brand">MY <span>CUVAS</span> <span class="badge">DEMO</span></div>
-<nav>{% if session.get('user_id') %}<span>{{ session.display_name }} ({{ session.role }})</span><a href="{{ url_for('logout') }}">Sign out</a>{% else %}<a href="{{ url_for('landing') }}">Home</a><a href="{{ url_for('login') }}">Login</a>{% endif %}</nav></header>
-{% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}<div class="wrap">{% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+{% block header %}<header class="topbar"><div class="brand"><span class="brand-box">CUVAS</span><span class="brand-text">Cholistan University of Veterinary<br>and Animal Sciences, Bahawalpur</span> <span class="badge">DEMO</span></div>
+<nav>{% if session.get('user_id') %}<span>{{ session.display_name }} ({{ session.role }})</span><a href="{{ url_for('logout') }}">Sign out</a>{% else %}<a href="{{ url_for('landing') }}">Home</a><a href="{{ url_for('login') }}">Login</a>{% endif %}</nav></header>{% endblock %}
+{% block flashes %}{% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}<div class="wrap" style="padding-bottom:0">{% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}</div>{% endif %}{% endwith %}{% endblock %}
 {% block body %}{% endblock %}
-<footer>MY CUVAS — Campus Management System (Demo) v0.3 · Cholistan University of Veterinary and Animal Sciences · All data shown is fictional demo data.</footer>
+{% block footer %}<footer class="site-foot">MY CUVAS — Campus Management System (Demo) v0.3 · Cholistan University of Veterinary and Animal Sciences · All data shown is fictional demo data.</footer>{% endblock %}
 </body></html>

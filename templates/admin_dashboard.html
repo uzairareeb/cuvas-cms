@@ -1,15 +1,39 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<h2>Admin Dashboard</h2><p class="muted">Welcome, {{ session.display_name }} — demo overview of MY CUVAS.</p>
+{% block admin_body %}
+<div class="page-head"><h2>Welcome Back, Admin!</h2><p class="muted">Here's what's happening at CUVAS, Bahawalpur today.</p></div>
+
 <div class="grid">
-<div class="card kpi"><div class="num">{{ kpis.students }}</div><div class="lbl">Students</div></div>
-<div class="card kpi teal"><div class="num">{{ kpis.departments }}</div><div class="lbl">Departments</div></div>
-<div class="card kpi gold"><div class="num">{{ kpis.programs }}</div><div class="lbl">Programs</div></div>
-<div class="card kpi red"><div class="num">{{ kpis.pending_vouchers }}</div><div class="lbl">Pending Vouchers</div></div>
+<div class="card kpi"><div class="kpi-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M15.5 5.2a3.4 3.4 0 0 1 0 5.9"/><path d="M17.8 15.4c1.6.7 2.5 2.2 2.8 4.6"/></svg></div><div><div class="lbl">Total Students</div><div class="num">{{ kpis.students }}</div></div></div>
+<div class="card kpi"><div class="kpi-ico teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h7A1.5 1.5 0 0 1 15 4.5V21"/><path d="M15 9.5h2.5A1.5 1.5 0 0 1 19 11v10"/><path d="M3 21h18"/><path d="M8.5 7h3M8.5 11h3M8.5 15h3"/></svg></div><div><div class="lbl">Departments</div><div class="num">{{ kpis.departments }}</div></div></div>
+<div class="card kpi"><div class="kpi-ico violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 9.3 9.5-4.8 9.5 4.8-9.5 4.8z"/><path d="M6.3 11.4v4.8c0 1.4 2.6 2.8 5.7 2.8s5.7-1.4 5.7-2.8v-4.8"/><path d="M21.5 9.3v5"/></svg></div><div><div class="lbl">Programs</div><div class="num">{{ kpis.programs }}</div></div></div>
+<div class="card kpi"><div class="kpi-ico amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M15 7v11" stroke-dasharray="2.5 2.8"/><path d="M6.5 11h4M6.5 14h4"/></svg></div><div><div class="lbl">Pending Vouchers</div><div class="num">{{ kpis.pending_vouchers }}</div></div></div>
 </div>
-<h3 style="margin-top:26px">Pending Vouchers</h3>
-<table><tr><th>Challan #</th><th>Student</th><th>Title</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th></tr>
-{% for v in pending %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}</td><td>{{ v.title }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="pill pending">{{ v.status }}</span></td></tr>{% else %}<tr><td colspan="6">No pending vouchers.</td></tr>{% endfor %}</table>
-<h3 style="margin-top:26px">Recent Students</h3>
-<table><tr><th>Reg. No</th><th>Name</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th></tr>
-{% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td></tr>{% endfor %}</table>
+
+<div class="dash-grid">
+<div class="dash-col">
+<div class="card"><div class="panel-head"><h3>Recent Students</h3><a href="{{ url_for('admin_students') }}">View All</a></div>
+<table><tr><th>#</th><th>Name</th><th>Reg. No</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th><th>Action</th></tr>
+{% for s in recent_students %}<tr><td>{{ loop.index }}</td><td>{{ s.name }}</td><td>{{ s.registration_no }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td><td><a class="btn small" href="{{ url_for('admin_student_edit', student_id=s.id) }}">View</a></td></tr>{% endfor %}</table></div>
+
+<div class="card"><div class="panel-head"><h3>Courses by Program</h3><a href="{{ url_for('admin_courses') }}">View All</a></div>
+{% for r in courses_by_program %}<div class="bar-row"><span class="b-name">{{ r.prog }}</span><div class="bar-track"><div class="bar-fill c{{ (loop.index0 % 5) + 1 }}" style="width:{{ (r.cnt * 100 // cp_max) if cp_max else 0 }}%"></div></div><span class="b-num">{{ r.cnt }}</span></div>{% else %}<p class="muted">No courses yet.</p>{% endfor %}</div>
+</div>
+
+<div class="dash-col">
+<div class="card"><div class="panel-head"><h3>Pending Vouchers</h3><a href="{{ url_for('admin_vouchers') }}">View All</a></div>
+<div class="voucher-list">
+{% for v in pending %}<div class="voucher-item"><div class="v-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M15 7v11" stroke-dasharray="2.5 2.8"/><path d="M6.5 11h4M6.5 14h4"/></svg></div><div class="v-main"><div class="v-title">{{ v.challan_no }} — Rs {{ "{:,}".format(v.amount) }}</div><div class="v-sub">{{ v.student_name }} · {{ v.title }} · Due {{ v.due_date }}</div></div><span class="pill pending">{{ v.status }}</span></div>{% else %}<p class="muted">No pending vouchers.</p>{% endfor %}
+</div></div>
+
+<div class="card"><div class="panel-head"><h3>Quick Actions</h3></div>
+<div class="qa-grid">
+<a class="qa" href="{{ url_for('admin_student_new') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7.5" r="3.6"/><path d="M3.5 20c.6-3.4 3-5.2 6.5-5.2 1.6 0 3 .4 4.1 1.3"/><path d="M18.8 8.5v6M15.8 11.5h6"/></svg>Add New Student</a>
+<a class="qa" href="{{ url_for('admin_department_new') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h7A1.5 1.5 0 0 1 15 4.5V21"/><path d="M15 9.5h2.5A1.5 1.5 0 0 1 19 11v10"/><path d="M3 21h18"/><path d="M8.5 7h3M8.5 11h3M8.5 15h3"/></svg>Add Department</a>
+<a class="qa" href="{{ url_for('admin_voucher_generate') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M15 7v11" stroke-dasharray="2.5 2.8"/><path d="M6.5 11h4M6.5 14h4"/></svg>Generate Vouchers</a>
+<a class="qa" href="{{ url_for('admin_results') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="4.5" width="13" height="17" rx="2"/><path d="M9 4.5a3 3 0 0 1 6 0"/><path d="m9 14.5 2.2 2.2 4.3-4.7"/></svg>Enter Results</a>
+<a class="qa" href="{{ url_for('admin_students_import') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5v-11M6.8 9.5 12 4.3l5.2 5.2"/><path d="M4 16.5V19a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-2.5"/></svg>Import Students</a>
+<a class="qa" href="{{ url_for('admin_fee_plans') }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4L10 21l-2-1.4L6 21z"/><path d="M9.5 8h5M9.5 12h5"/></svg>Fee Plans</a>
+</div></div>
+</div>
+</div>
 {% endblock %}
