@@ -1,0 +1,26 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Generate Vouchers</h2>
+<div class="form-card wide">
+<form method="get">
+<label>Fee Plan</label>
+<select name="plan_id" onchange="this.form.submit()"><option value="">— choose a fee plan —</option>
+{% for p in plans %}<option value="{{ p.id }}" {{ 'selected' if plan and plan.id==p.id else '' }}>{{ p.prog_name }} · {{ p.sess_name }} · Semester {{ p.semester_no }}{{ ' — ' + p.title if p.title else '' }}</option>{% endfor %}</select>
+</form>
+{% if plan %}
+<p>Plan total: <strong>Rs {{ "{:,}".format(plan_total_due) }}</strong> · Eligible students (program + session + semester match, Active): <strong>{{ students|length }}</strong></p>
+<form method="post">
+<input type="hidden" name="plan_id" value="{{ plan.id }}">
+<label>Due Date</label>
+<input type="date" name="due_date" value="{{ plan.due_date or '' }}">
+<label>Generate for</label>
+<select name="student_id">
+<option value="all">All eligible students (bulk — {{ students|length }})</option>
+{% for s in students %}<option value="{{ s.id }}">{{ s.name }} ({{ s.registration_no }})</option>{% endfor %}
+</select>
+<p class="muted">Students who already have a voucher from this plan are skipped and reported.</p>
+<div class="form-actions"><button class="btn green" type="submit">Generate Voucher(s)</button>
+<a class="btn ghost" href="{{ url_for('admin_vouchers') }}">Cancel</a></div>
+</form>
+{% else %}<p class="muted">Choose a fee plan above to see eligible students. Need a new plan? <a href="{{ url_for('admin_fee_plan_new') }}">Create a fee plan</a>.</p>{% endif %}
+</div>
+{% endblock %}

@@ -57,16 +57,30 @@
 </div></section>
 
 <section class="tab-pane" id="pane-voucher"><div class="card"><h3>Financial Vouchers</h3>
-<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th></tr>
-{% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="pill {{ 'paid' if v.status=='Paid' else 'pending' }}">{{ v.status }}</span></td><td>{{ v.remarks }}</td></tr>{% endfor %}</table></div></section>
+<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th><th>Actions</th></tr>
+{% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td>
+<td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span>
+{% if v.status=='Paid' and v.paid_at %}<br><span class="muted">Paid {{ v.paid_at[:10] }}{% if v.payment_channel %} via {{ v.payment_channel }}{% endif %}</span>{% endif %}
+{% if v.status=='Proof Submitted' %}<br><span class="muted">Proof: {{ v.proof_filename }} ({{ v.payment_channel }})</span>{% endif %}</td>
+<td>{{ v.remarks }}</td>
+<td class="actions"><a class="btn small" href="{{ url_for('student_voucher_challan', voucher_id=v.id) }}">Challan PDF</a>
+{% if v.can_split %}<form method="post" action="{{ url_for('student_voucher_installments', voucher_id=v.id) }}" onsubmit="return confirm('Split this voucher into 2 installments? This voucher will no longer be payable.');"><button class="btn small ghost" type="submit">Create 2 Installments</button></form>{% endif %}
+</td></tr>
+{% if v.payable %}<tr><td colspan="7"><form method="post" enctype="multipart/form-data" action="{{ url_for('student_voucher_proof', voucher_id=v.id) }}" class="proof-form">
+<label>Upload paid proof for {{ v.challan_no }}:</label>
+<input type="file" name="proof" required>
+<select name="payment_channel"><option>Bank</option><option>Mobile Wallet</option><option>RAAST</option></select>
+<button class="btn small green" type="submit">Submit Paid Proof</button></form></td></tr>{% endif %}
+{% endfor %}</table></div></section>
 
 <section class="tab-pane" id="pane-feeplan"><div class="grid">
 <div class="card"><h3>Fee Plan — Semester {{ student.current_semester }}</h3>
+{% if student_plan %}<p class="muted">{{ student_plan.title or 'Fee Plan' }} · {{ student_plan.prog_name }} · {{ student_plan.sess_name }}{% if student_plan.due_date %} · Due {{ student_plan.due_date }}{% endif %}</p>{% endif %}
 <table><tr><th>Fee Head</th><th>Amount (Rs)</th></tr>
 {% for f in fee_lines %}<tr><td>{{ f.head }}</td><td>{{ "{:,}".format(f.amount) }}</td></tr>{% endfor %}
 <tr><th>Total</th><th>{{ "{:,}".format(fee_total) }}</th></tr></table></div>
 <div class="card"><h3>Scholarships</h3><p>No scholarship awarded yet (Demo).</p><p class="muted">Demo Merit Scholarship — applications open in a later phase.</p></div>
-<div class="card"><h3>Remarks</h3><p>Fee plan is generated per program &amp; semester (Demo). Scholarships, when awarded, will reflect here and in the Account Statement.</p></div>
+<div class="card"><h3>Remarks</h3><p>Your fee plan is set per program, session &amp; semester by the accounts office. Scholarships, when awarded, will reflect here and in the Account Statement.</p></div>
 </div></section>
 
 <section class="tab-pane" id="pane-statement"><div class="card"><h3>Account Statement</h3>

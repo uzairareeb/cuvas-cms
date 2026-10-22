@@ -15,6 +15,12 @@ a{color:var(--green);text-decoration:none}
 .kpi.gold{border-top-color:var(--gold)}.kpi.teal{border-top-color:var(--teal)}.kpi.red{border-top-color:var(--red)}
 table{width:100%;border-collapse:collapse;background:#fff}th{background:#eaf5ee;text-align:left;padding:10px;border-bottom:2px solid var(--line)}td{padding:9px 10px;border-bottom:1px solid var(--line)}
 .pill{padding:3px 11px;border-radius:20px;font-size:12px;font-weight:700}.paid{background:#dff5e6;color:var(--green)}.pending{background:#fff3cd;color:var(--amber)}
+.submitted{background:#dbeafe;color:#1d4ed8}.split{background:#ece7f7;color:#5b3ea8}
+.proof-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.proof-form input[type=file]{width:auto;margin:0;padding:6px}
+.proof-form select{padding:8px;border:1px solid #c9dcd1;border-radius:9px;width:auto;margin:0}
+.form-card select,.form-card input[type=date]{width:100%;padding:11px;border:1px solid #c9dcd1;border-radius:9px;margin:6px 0 14px;font-family:inherit;font-size:14px}
+#lines-table select,#lines-table input{margin:0}
 .layout{display:flex;min-height:calc(100vh - 49px)}.sidebar{width:220px;background:#0d3b26;color:#dff5e6;padding:18px 12px;flex-shrink:0}
 .sidebar a{display:block;color:#dff5e6;padding:10px 12px;border-radius:8px;margin-bottom:4px}.sidebar a:hover,.sidebar a.active{background:rgba(255,255,255,.13);color:#fff}
 .main{flex:1;padding:22px;min-width:0}

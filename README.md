@@ -1,9 +1,13 @@
-# MY CUVAS — Campus Management System (Demo) v0.2
+# MY CUVAS — Campus Management System (Demo) v0.3
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
-Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards) plus the
-v0.2 foundation — **Step 6: real database layer** and **Step 7: admin CRUD +
-students management**.
+Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
+v0.2 foundation (**Step 6: real database layer**, **Step 7: admin CRUD +
+students management**) and **Step 8 (v0.3): the working fee system** —
+fee heads + fee plans, voucher generation (single + bulk) with sequential
+challan numbers, challan PDF (ReportLab), 2-installment splits, paid-proof
+upload (stored as a database blob), admin verify/reject, and a real
+append-only ledger behind the Account Statement.
 
 ## Database (Step 6)
 
@@ -56,16 +60,48 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   - `/admin/students/export.xlsx` — export of the currently filtered list
 - `/admin/departments`, `/admin/programs`, `/admin/sessions`, `/admin/courses` — full CRUD;
   deletes are blocked with an explanation while other records still reference the row
+- `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
+- `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
+  items and computed totals; delete blocked once vouchers exist for the plan
+- `/admin/vouchers` — voucher list with status counts and status / program / session /
+  search filters
+  - `/admin/vouchers/generate` — generate from a fee plan: one selected student, or bulk
+    for all eligible (program + session + semester, Active) students; students who
+    already have a voucher from the plan are skipped and reported. Challan numbers are
+    sequential: `CUVAS-<year>-<seq>`
+  - `/admin/vouchers/<id>` — detail: breakdown, paid proof (view/download), **Verify**
+    (marks Paid, writes the ledger credit exactly once) / **Reject** (back to Pending,
+    remark shown to the student), Create 2 Installments, ledger entries for the voucher
+  - `/admin/vouchers/<id>/challan.pdf` — challan PDF
 - `/student` — student dashboard (8 tabs) serving the logged-in student's own real record:
   News Feed, Profile, Course Enrollments, Plan Of Study, Transcript (SGPA/CGPA computed),
-  Financial Voucher, Fee Plan & Scholarships, Account Statement
+  Financial Voucher (download challan PDF, create 2 installments, upload paid proof with
+  payment channel), Fee Plan & Scholarships (the student's applicable real fee plan),
+  Account Statement (real ledger with Total Payable / Paid / Outstanding)
+
+### Fee-system ledger rules
+
+The ledger is **append-only**: a debit entry when a voucher is created, a credit
+entry when its payment is verified (guarded — a voucher is credited exactly
+once). Splitting a voucher writes a **negative-debit reversal** for the parent
+and debits the two children (first = ceil half, second = remainder, due dates =
+original and +30 days), so statement totals always equal the sum of payable
+voucher amounts. The parent becomes *Split into Installments* and is not
+payable. Paid-proof files are stored **in the database** (`proof_blob`,
+BYTEA/BLOB) — never on the ephemeral server filesystem.
 
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
 import 3-valid/1-bad, export, delete blocks, role guards) against a **fresh**
-database. Run it with `DB_PATH=<fresh file>` (SQLite) or `DATABASE_URL=<uri>`
-(PostgreSQL) using the app venv's python. v0.2 result: **ALL PASS on both backends**.
+database. `verify_v03.py` runs a 52-check pass over the fee system (fee heads /
+plans, single + bulk generation with duplicate-skip counts, challan PDF bytes,
+installment split maths, proof upload → admin byte-identical download → verify →
+statement totals, double-verify guard, reject flow, cross-student guards).
+Run either with `DB_PATH=<fresh file>` (SQLite) or `DATABASE_URL=<uri>`
+(PostgreSQL) using the app venv's python. v0.3 result: **both suites ALL PASS
+on both backends**; v0.1/v0.2-era databases are migrated idempotently at boot
+(`backfill_v03`: demo fee plan, ledger↔voucher linking, session repair).
 
 ## On Vercel
 
@@ -73,8 +109,8 @@ database. Run it with `DB_PATH=<fresh file>` (SQLite) or `DATABASE_URL=<uri>`
 Preset: Flask). Without `DATABASE_URL`, Vercel uses an ephemeral SQLite DB under
 `/tmp` that re-seeds on cold start; set `DATABASE_URL` (Neon) for real data.
 
-## Not in v0.2
+## Not in v0.3
 
-Fee-plan → voucher generation & challan PDF, installments, transcript PDF,
-documents, tickets, notifications admin, repository, student card PDF,
-faculty/dept/accounts/COE portals — later Phase 1 steps (see `../architecture.md`).
+Transcript PDF, documents upload/verification, tickets, notifications admin,
+repository, student card PDF, faculty/dept/accounts/COE portals — later Phase 1
+steps (see `../architecture.md`).

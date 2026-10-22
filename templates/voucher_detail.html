@@ -1,0 +1,64 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Voucher {{ v.challan_no }}</h2>
+<div><a class="btn" href="{{ url_for('admin_voucher_challan', voucher_id=v.id) }}">⬇ Challan PDF</a>
+<a class="btn ghost" href="{{ url_for('admin_vouchers') }}">← All Vouchers</a></div></div>
+<div class="grid">
+<div class="card"><h3>Voucher</h3>
+<table>
+<tr><th>Title</th><td>{{ v.title }}</td></tr>
+<tr><th>Kind</th><td>{{ v.kind or 'semester' }}{% if parent %} · part of <a href="{{ url_for('admin_voucher_detail', voucher_id=parent.id) }}">{{ parent.challan_no }}</a>{% endif %}</td></tr>
+<tr><th>Amount</th><td>Rs {{ "{:,}".format(v.amount) }}</td></tr>
+<tr><th>Due Date</th><td>{{ v.due_date or '—' }}</td></tr>
+<tr><th>Status</th><td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span></td></tr>
+{% if v.status=='Paid' %}<tr><th>Paid At</th><td>{{ v.paid_at or '—' }}</td></tr><tr><th>Channel</th><td>{{ v.payment_channel or '—' }}</td></tr>{% endif %}
+{% if v.remarks %}<tr><th>Remarks</th><td>{{ v.remarks }}</td></tr>{% endif %}
+</table></div>
+<div class="card"><h3>Student</h3>
+<table>
+<tr><th>Name</th><td>{{ v.student_name }}</td></tr>
+<tr><th>Registration No</th><td>{{ v.registration_no }}</td></tr>
+<tr><th>Program</th><td>{{ v.prog_name or '—' }}</td></tr>
+<tr><th>Session</th><td>{{ v.sess_name or '—' }}</td></tr>
+<tr><th>Semester</th><td>{{ v.semester_no or '—' }}</td></tr>
+</table></div>
+</div>
+
+<div class="card" style="margin-top:18px"><h3>Fee Breakdown</h3>
+<table><tr><th>Description</th><th>Amount (Rs)</th></tr>
+{% for label, amt in breakdown %}<tr><td>{{ label }}</td><td>{{ "{:,}".format(amt) }}</td></tr>{% endfor %}
+<tr><th>Total</th><th>{{ "{:,}".format(v.amount) }}</th></tr></table></div>
+
+{% if v.status == 'Proof Submitted' %}
+<div class="card" style="margin-top:18px"><h3>Paid Proof — Verification</h3>
+<p>Channel: <strong>{{ v.payment_channel or '—' }}</strong> · File: <strong>{{ v.proof_filename or '—' }}</strong>
+{% if v.proof_filename %} · <a class="btn small" href="{{ url_for('admin_voucher_proof', voucher_id=v.id) }}">View / Download Proof</a>{% endif %}</p>
+<div class="form-actions">
+<form method="post" action="{{ url_for('admin_voucher_verify', voucher_id=v.id) }}" onsubmit="return confirm('Verify payment for {{ v.challan_no }} and mark it Paid?');"><button class="btn green" type="submit">✓ Verify — Mark Paid</button></form>
+</div>
+<form method="post" action="{{ url_for('admin_voucher_reject', voucher_id=v.id) }}" style="margin-top:12px" onsubmit="return confirm('Reject this proof? The voucher returns to Pending.');">
+<label>Rejection remark (shown to the student)</label>
+<input name="remark" placeholder="e.g. Image is blurry — please upload a clear copy">
+<button class="btn danger" type="submit">✗ Reject Proof</button></form>
+</div>
+{% elif v.proof_filename %}
+<div class="card" style="margin-top:18px"><h3>Paid Proof</h3>
+<p>File: <strong>{{ v.proof_filename }}</strong> · Channel: <strong>{{ v.payment_channel or '—' }}</strong> ·
+<a class="btn small" href="{{ url_for('admin_voucher_proof', voucher_id=v.id) }}">View / Download Proof</a></p></div>
+{% endif %}
+
+{% if v.status == 'Pending' %}
+<div class="card" style="margin-top:18px"><h3>Installments</h3>
+<form method="post" action="{{ url_for('admin_voucher_installments', voucher_id=v.id) }}" onsubmit="return confirm('Split this voucher into 2 installments? The original voucher will no longer be payable.');">
+<button class="btn" type="submit">Create 2 Installments</button></form></div>
+{% endif %}
+
+{% if children %}
+<div class="card" style="margin-top:18px"><h3>Installment Vouchers</h3>
+<table><tr><th>Challan #</th><th>Title</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th></th></tr>
+{% for c in children %}<tr><td>{{ c.challan_no }}</td><td>{{ c.title }}</td><td>{{ "{:,}".format(c.amount) }}</td><td>{{ c.due_date }}</td><td>{{ c.status }}</td><td><a class="btn small ghost" href="{{ url_for('admin_voucher_detail', voucher_id=c.id) }}">Detail</a></td></tr>{% endfor %}</table></div>
+{% endif %}
+
+<div class="card" style="margin-top:18px"><h3>Ledger Entries (this voucher)</h3>
+<table><tr><th>Date</th><th>Description</th><th>Charged (Rs)</th><th>Paid (Rs)</th></tr>
+{% for e in entries %}<tr><td>{{ e.entry_date }}</td><td>{{ e.description }}</td><td>{{ "{:,}".format(e.debit) if e.debit else '—' }}</td><td>{{ "{:,}".format(e.credit) if e.credit else '—' }}</td></tr>{% else %}<tr><td colspan="4">No ledger entries.</td></tr>{% endfor %}</table></div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Fee Heads</h2></div>
+<div class="form-card" style="margin-bottom:18px"><h3 style="margin-top:0">Add Fee Head</h3>
+<form method="post" action="{{ url_for('admin_fee_head_new') }}">
+<label>Fee head name (e.g. Tuition Fee)</label>
+<input name="name" required placeholder="Fee head name">
+<div class="form-actions"><button class="btn green" type="submit">+ Add Fee Head</button></div>
+</form></div>
+<table><tr><th>Name</th><th>Used In Plan Lines</th><th>Actions</th></tr>
+{% for h in rows %}<tr><td>{{ h.name }}</td><td>{{ h.use_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_fee_head_edit', head_id=h.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_fee_head_delete', head_id=h.id) }}" onsubmit="return confirm('Delete fee head {{ h.name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="3">No fee heads yet.</td></tr>{% endfor %}</table>
+{% endblock %}

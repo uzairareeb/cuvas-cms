@@ -1,15 +1,20 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.2
+MY CUVAS — Campus Management System (Demo) v0.3
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
   7. Admin CRUD for Departments / Programs / Sessions / Courses, and full
      Students management (list/search/filter, add/edit, auto student login,
      password reset, Excel import/export with template).
+  8. v0.3 working fee system — fee heads + fee plans, voucher generation
+     (single + bulk) with sequential challan numbers, challan PDF (ReportLab),
+     2-installment splits, paid-proof upload stored as a DB blob, admin
+     verify/reject, and a real append-only ledger behind the Account Statement.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
 """
+import datetime
 import io
 import math
 import os
@@ -19,8 +24,8 @@ import sqlite3
 import string
 from functools import wraps
 
-from flask import (Flask, g, redirect, render_template, request, send_file,
-                   session, url_for, flash)
+from flask import (Flask, abort, g, redirect, render_template, request,
+                   send_file, session, url_for, flash)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -178,6 +183,15 @@ DDL = [
         entry_date TEXT, description TEXT, debit INTEGER DEFAULT 0, credit INTEGER DEFAULT 0)""",
     f"""CREATE TABLE IF NOT EXISTS notifications (
         id {_PK}, title TEXT, body TEXT, published_at TEXT)""",
+    # --- v0.3 finance ---
+    f"""CREATE TABLE IF NOT EXISTS fee_heads (
+        id {_PK}, name TEXT UNIQUE NOT NULL)""",
+    f"""CREATE TABLE IF NOT EXISTS fee_plans (
+        id {_PK}, program_id INTEGER REFERENCES programs(id),
+        session_id INTEGER REFERENCES academic_sessions(id),
+        semester_no INTEGER, title TEXT, due_date TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS counters (
+        name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -186,6 +200,15 @@ EXTRA_COLUMNS = {
     "students": [("cnic", "TEXT"), ("domicile", "TEXT"), ("blood_group", "TEXT"),
                  ("address_present", "TEXT"), ("address_permanent", "TEXT"),
                  ("session_id", "INTEGER")],
+    # --- v0.3 finance columns (existing vouchers / plan lines / ledger) ---
+    "vouchers": [("session_id", "INTEGER"), ("semester_no", "INTEGER"),
+                 ("kind", "TEXT"), ("parent_voucher_id", "INTEGER"),
+                 ("fee_plan_id", "INTEGER"), ("payment_channel", "TEXT"),
+                 ("paid_at", "TEXT"), ("proof_filename", "TEXT"),
+                 ("proof_mimetype", "TEXT"),
+                 ("proof_blob", "BYTEA" if PG else "BLOB")],
+    "fee_plan_lines": [("plan_id", "INTEGER"), ("head_id", "INTEGER")],
+    "ledger_entries": [("voucher_id", "INTEGER")],
 }
 
 
@@ -209,7 +232,126 @@ def init_db():
         ensure_columns(db, table, cols)
     db.commit()
     seed(db)
+    backfill_v03(db)
+    db.commit()
     db.conn.close()
+
+
+# ------------------------------------------------------- v0.3 finance backfill
+def backfill_v03(db):
+    """Idempotent v0.3 migration for databases created by v0.1/v0.2 (and for
+    fresh seeds): build fee heads + the demo fee plan from the legacy global
+    fee_plan_lines, tag seeded vouchers, link ledger rows to their voucher,
+    and make sure every voucher has its debit (and, if Paid, credit) entry so
+    statement totals always match the voucher list. Safe to run repeatedly."""
+    # --- repair v0.1-era students: they carry session_name but no session_id,
+    # and their DB may have no session rows at all. Create/link them so fee
+    # plans (which match on session_id) work on migrated databases too. ---
+    for r in db.execute(
+            """SELECT DISTINCT session_name FROM students
+               WHERE session_id IS NULL AND session_name IS NOT NULL AND session_name<>''""").fetchall():
+        srow = db.execute("SELECT id FROM academic_sessions WHERE name=?",
+                          (r["session_name"],)).fetchone()
+        sid = srow["id"] if srow else db.insert(
+            "INSERT INTO academic_sessions (name,starts_on,ends_on,is_open) VALUES (?,?,?,?)",
+            (r["session_name"], "", "", 0))
+        db.execute("UPDATE students SET session_id=? WHERE session_name=? AND session_id IS NULL",
+                   (sid, r["session_name"]))
+
+    # --- fee heads from legacy plan lines (or the standard demo heads) ---
+    if not db.execute("SELECT COUNT(*) c FROM fee_heads").fetchone()["c"]:
+        heads = []
+        for r in db.execute(
+                "SELECT head FROM fee_plan_lines WHERE head IS NOT NULL ORDER BY id").fetchall():
+            if r["head"] not in heads:
+                heads.append(r["head"])
+        if not heads:
+            heads = ["Tuition Fee (Demo)", "University / Institute Charges (Demo)",
+                     "Transport Charges (Demo)", "Library Charges (Demo)",
+                     "Examination Charges (Demo)"]
+        for h in heads:
+            db.insert("INSERT INTO fee_heads (name) VALUES (?)", (h,))
+    head_ids = {r["name"]: r["id"] for r in db.execute("SELECT id,name FROM fee_heads").fetchall()}
+
+    # --- demo fee plan for the demo student, built from the legacy lines ---
+    demo = db.execute(
+        "SELECT * FROM students WHERE registration_no='CUVAS-DEMO-2026-001'").fetchone()
+    demo_sid = None
+    if demo:
+        demo_sid = demo.get("session_id")
+        if not demo_sid and demo.get("session_name"):
+            # v0.1-era rows have session_name but a NULL session_id column
+            srow = db.execute("SELECT id FROM academic_sessions WHERE name=?",
+                               (demo["session_name"],)).fetchone()
+            if srow:
+                demo_sid = srow["id"]
+    if demo and demo.get("program_id") and demo_sid:
+        plan = db.execute(
+            "SELECT id FROM fee_plans WHERE program_id=? AND session_id=? AND semester_no=?",
+            (demo["program_id"], demo_sid, demo["current_semester"] or 3)).fetchone()
+        if not plan:
+            plan_id = db.insert(
+                "INSERT INTO fee_plans (program_id,session_id,semester_no,title,due_date) VALUES (?,?,?,?,?)",
+                (demo["program_id"], demo_sid, demo["current_semester"] or 3,
+                 "Semester Fee Plan (Demo)", "2026-11-15"))
+        else:
+            plan_id = plan["id"]
+        # attach the legacy global lines to this plan (once only)
+        for line in db.execute(
+                "SELECT * FROM fee_plan_lines WHERE plan_id IS NULL ORDER BY id").fetchall():
+            db.execute("UPDATE fee_plan_lines SET plan_id=?, head_id=? WHERE id=?",
+                       (plan_id, head_ids.get(line["head"]), line["id"]))
+        # tag the demo student's vouchers
+        db.execute(
+            "UPDATE vouchers SET kind='admission' WHERE student_id=? AND challan_no='DEMO-CH-1000' AND kind IS NULL",
+            (demo["id"],))
+        db.execute(
+            "UPDATE vouchers SET kind='semester', semester_no=2, session_id=? "
+            "WHERE student_id=? AND challan_no='DEMO-CH-1001' AND kind IS NULL",
+            (demo_sid, demo["id"]))
+        db.execute(
+            "UPDATE vouchers SET kind='semester', semester_no=?, session_id=?, fee_plan_id=? "
+            "WHERE student_id=? AND challan_no='DEMO-CH-1002' AND kind IS NULL",
+            (demo["current_semester"] or 3, demo_sid, plan_id, demo["id"]))
+    db.execute("UPDATE vouchers SET kind='semester' WHERE kind IS NULL")
+
+    # --- link ledger rows to vouchers by challan number ---
+    db.execute(
+        """UPDATE ledger_entries SET voucher_id=(
+               SELECT id FROM vouchers WHERE vouchers.challan_no=ledger_entries.challan_no)
+           WHERE voucher_id IS NULL AND challan_no IS NOT NULL""")
+
+    # --- guarantee debit/credit entries for every voucher ---
+    for v in db.execute("SELECT * FROM vouchers ORDER BY id").fetchall():
+        has_debit = db.execute(
+            "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND debit>0",
+            (v["id"],)).fetchone()["c"]
+        if not has_debit:
+            db.insert(
+                """INSERT INTO ledger_entries (student_id,voucher_id,voucher_title,challan_no,
+                   entry_date,description,debit,credit) VALUES (?,?,?,?,?,?,?,?)""",
+                (v["student_id"], v["id"], v["title"], v["challan_no"],
+                 v["due_date"] or _today(), f"{v['title']} charged", v["amount"] or 0, 0))
+        if v["status"] == "Paid":
+            has_credit = db.execute(
+                "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND credit>0",
+                (v["id"],)).fetchone()["c"]
+            if not has_credit:
+                channel = v.get("payment_channel") or "Bank"
+                db.insert(
+                    """INSERT INTO ledger_entries (student_id,voucher_id,voucher_title,challan_no,
+                       entry_date,description,debit,credit) VALUES (?,?,?,?,?,?,?,?)""",
+                    (v["student_id"], v["id"], v["title"], v["challan_no"],
+                     (v.get("paid_at") or _today())[:10],
+                     f"Payment received — {channel}", 0, v["amount"] or 0))
+
+
+def _today():
+    return datetime.date.today().isoformat()
+
+
+def _now():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # -------------------------------------------------------------------- seed
@@ -432,14 +574,14 @@ def admin_dashboard():
         "students": db.execute("SELECT COUNT(*) c FROM students").fetchone()["c"],
         "departments": db.execute("SELECT COUNT(*) c FROM departments").fetchone()["c"],
         "programs": db.execute("SELECT COUNT(*) c FROM programs").fetchone()["c"],
-        "pending_vouchers": db.execute("SELECT COUNT(*) c FROM vouchers WHERE status='Pending'").fetchone()["c"],
+        "pending_vouchers": db.execute("SELECT COUNT(*) c FROM vouchers WHERE status IN ('Pending','Proof Submitted')").fetchone()["c"],
     }
     recent_students = db.execute(
         """SELECT s.*, d.name dept, p.name prog FROM students s
            LEFT JOIN departments d ON d.id=s.department_id
            LEFT JOIN programs p ON p.id=s.program_id ORDER BY s.id DESC LIMIT 6""").fetchall()
     pending = db.execute(
-        "SELECT v.*, s.name student_name FROM vouchers v JOIN students s ON s.id=v.student_id WHERE v.status='Pending'").fetchall()
+        "SELECT v.*, s.name student_name FROM vouchers v JOIN students s ON s.id=v.student_id WHERE v.status IN ('Pending','Proof Submitted') ORDER BY v.id DESC").fetchall()
     return render_template("admin_dashboard.html", kpis=kpis,
                            recent_students=recent_students, pending=pending)
 
@@ -1285,19 +1427,712 @@ def student_dashboard():
         transcript[sem] = {"rows": items, "sgpa": round(qp / ch, 2) if ch else 0.0, "cgpa": cgpa}
 
     vouchers = db.execute("SELECT * FROM vouchers WHERE student_id=? ORDER BY id", (sid,)).fetchall()
-    fee_lines = db.execute("SELECT * FROM fee_plan_lines ORDER BY id").fetchall()
-    fee_total = sum(x["amount"] for x in fee_lines)
+    voucher_children = {v["id"] for v in vouchers if v.get("parent_voucher_id")}
+    parents_with_children = {v["parent_voucher_id"] for v in vouchers if v.get("parent_voucher_id")}
+    for v in vouchers:
+        v["payable"] = v["status"] == "Pending"
+        v["can_split"] = v["status"] == "Pending" and v["id"] not in parents_with_children
+        v["is_child"] = v["id"] in voucher_children
+    # the student's applicable real fee plan (program + session + semester)
+    student_plan, fee_lines = None, []
+    eff_session_id = student.get("session_id")
+    if not eff_session_id and student.get("session_name"):
+        srow = db.execute("SELECT id FROM academic_sessions WHERE name=?",
+                          (student["session_name"],)).fetchone()
+        if srow:
+            eff_session_id = srow["id"]
+    if student["program_id"] and eff_session_id:
+        student_plan = db.execute(
+            """SELECT fp.*, p.name prog_name, ss.name sess_name FROM fee_plans fp
+               LEFT JOIN programs p ON p.id=fp.program_id
+               LEFT JOIN academic_sessions ss ON ss.id=fp.session_id
+               WHERE fp.program_id=? AND fp.session_id=? AND fp.semester_no=?
+               ORDER BY fp.id DESC""",
+            (student["program_id"], eff_session_id,
+             student["current_semester"] or 0)).fetchone()
+    if student_plan:
+        fee_lines = db.execute(
+            """SELECT l.*, h.name head_name FROM fee_plan_lines l
+               LEFT JOIN fee_heads h ON h.id=l.head_id WHERE l.plan_id=? ORDER BY l.id""",
+            (student_plan["id"],)).fetchall()
+        for l in fee_lines:
+            l["head"] = l.get("head_name") or l.get("head")
+    else:
+        fee_lines = db.execute(
+            "SELECT * FROM fee_plan_lines WHERE plan_id IS NULL ORDER BY id").fetchall()
+    fee_total = sum(x["amount"] or 0 for x in fee_lines)
     ledger = db.execute("SELECT * FROM ledger_entries WHERE student_id=? ORDER BY entry_date, id", (sid,)).fetchall()
-    payable = sum(x["debit"] for x in ledger)
-    paid = sum(x["credit"] for x in ledger)
+    payable = sum(x["debit"] or 0 for x in ledger)
+    paid = sum(x["credit"] or 0 for x in ledger)
     active_tab = request.args.get("tab", "news")
     return render_template(
         "student_dashboard.html", student=student, certs=certs, news=news,
         enrollments=enrollments, plan=plan, plan_hours=plan_hours,
         fulfilled_hours=cumulative_ch, transcript=transcript, cgpa=cgpa,
         vouchers=vouchers, fee_lines=fee_lines, fee_total=fee_total,
+        student_plan=student_plan,
         ledger=ledger, payable=payable, paid=paid, outstanding=payable - paid,
         active_tab=active_tab)
+
+
+# ================================================================ v0.3 FINANCE
+# Fee heads, fee plans, vouchers, challan PDF, installments, paid proof,
+# verification and the append-only ledger. Rules (architecture.md):
+#   * a debit ledger entry is written when a voucher is created, a credit
+#     entry when its payment is verified — entries are never edited/deleted;
+#   * splitting a voucher reverses the parent's debit (negative debit entry)
+#     and debits the two children, so statement totals always equal the sum
+#     of payable voucher amounts;
+#   * verification is guarded so a voucher can be credited exactly once.
+VOUCHER_STATUSES = ["Pending", "Proof Submitted", "Paid", "Split into Installments"]
+PAYMENT_CHANNELS = ["Bank", "Mobile Wallet", "RAAST"]
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # proof uploads
+
+
+def next_challan_no(db):
+    """Sequential challan number, e.g. CUVAS-2026-0007 (per-year counter)."""
+    year = datetime.date.today().year
+    key = f"challan-{year}"
+    row = db.execute("SELECT value FROM counters WHERE name=?", (key,)).fetchone()
+    if row is None:
+        db.execute("INSERT INTO counters (name,value) VALUES (?,0)", (key,))
+        val = 0
+    else:
+        val = row["value"]
+    val += 1
+    db.execute("UPDATE counters SET value=? WHERE name=?", (val, key))
+    return f"CUVAS-{year}-{val:04d}"
+
+
+def ledger_add(db, voucher, entry_date, description, debit=0, credit=0):
+    return db.insert(
+        """INSERT INTO ledger_entries (student_id,voucher_id,voucher_title,challan_no,
+           entry_date,description,debit,credit) VALUES (?,?,?,?,?,?,?,?)""",
+        (voucher["student_id"], voucher["id"], voucher["title"], voucher["challan_no"],
+         entry_date, description, debit, credit))
+
+
+def plan_total(db, plan_id):
+    row = db.execute(
+        "SELECT COALESCE(SUM(amount),0) t FROM fee_plan_lines WHERE plan_id=?",
+        (plan_id,)).fetchone()
+    return row["t"] or 0
+
+
+def plan_lines(db, plan_id):
+    return db.execute(
+        """SELECT l.*, h.name head_name FROM fee_plan_lines l
+           LEFT JOIN fee_heads h ON h.id=l.head_id WHERE l.plan_id=? ORDER BY l.id""",
+        (plan_id,)).fetchall()
+
+
+def get_voucher(db, voucher_id):
+    return db.execute(
+        """SELECT v.*, s.name student_name, s.registration_no, s.program_id student_program_id,
+                  p.name prog_name, ss.name sess_name
+           FROM vouchers v JOIN students s ON s.id=v.student_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=COALESCE(v.session_id, s.session_id)
+           WHERE v.id=?""", (voucher_id,)).fetchone()
+
+
+def voucher_breakdown(db, v):
+    """(label, amount) lines for the challan PDF."""
+    if v.get("parent_voucher_id"):
+        parent = db.execute("SELECT * FROM vouchers WHERE id=?",
+                            (v["parent_voucher_id"],)).fetchone()
+        siblings = db.execute(
+            "SELECT id FROM vouchers WHERE parent_voucher_id=? ORDER BY id",
+            (v["parent_voucher_id"],)).fetchall()
+        idx = [s["id"] for s in siblings].index(v["id"]) + 1 if siblings else 1
+        label = f"Installment {idx} of {len(siblings) or 2}"
+        if parent:
+            label += f" — {parent['title']} ({parent['challan_no']})"
+        return [(label, v["amount"] or 0)]
+    if v.get("fee_plan_id"):
+        lines = plan_lines(db, v["fee_plan_id"])
+        if lines and sum(l["amount"] or 0 for l in lines) == (v["amount"] or 0):
+            return [(l.get("head_name") or l.get("head") or "Fee", l["amount"] or 0)
+                    for l in lines]
+    return [(v["title"], v["amount"] or 0)]
+
+
+def build_challan_pdf(db, v):
+    """Challan PDF bytes for one voucher (ReportLab)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    student = db.execute(
+        """SELECT s.*, p.name prog_name, d.name dept_name FROM students s
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN departments d ON d.id=s.department_id WHERE s.id=?""",
+        (v["student_id"],)).fetchone()
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=14 * mm,
+                            leftMargin=16 * mm, rightMargin=16 * mm,
+                            title=f"Fee Challan {v['challan_no']}")
+    story = [Paragraph("MY CUVAS — Campus Management System", styles["Title"]),
+             Paragraph("Cholistan University of Veterinary and Animal Sciences",
+                       styles["Heading3"]),
+             Paragraph("FEE CHALLAN / VOUCHER", styles["Heading2"]), Spacer(1, 4 * mm)]
+    info = [["Student Name", student["name"] if student else "—",
+             "Challan No.", v["challan_no"] or "—"],
+            ["Registration No.", student["registration_no"] if student else "—",
+             "Status", v["status"] or "—"],
+            ["Program", (student["prog_name"] or "—") if student else "—",
+             "Due Date", v["due_date"] or "—"],
+            ["Department", (student["dept_name"] or "—") if student else "—",
+             "Semester", str(v.get("semester_no") or (student["current_semester"] if student else "—"))],
+            ["Voucher Title", v["title"] or "—", "Kind", (v.get("kind") or "semester").title()]]
+    t = Table(info, colWidths=[32 * mm, 52 * mm, 26 * mm, 58 * mm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b9d2c2")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eaf5ee")),
+                           ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#eaf5ee")),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [t, Spacer(1, 5 * mm)]
+    lines = voucher_breakdown(db, v)
+    rows = [["#", "Description", "Amount (Rs)"]]
+    for i, (label, amt) in enumerate(lines, 1):
+        rows.append([str(i), label, f"{amt:,}"])
+    rows.append(["", "TOTAL PAYABLE", f"{v['amount'] or 0:,}"])
+    lt = Table(rows, colWidths=[10 * mm, 108 * mm, 50 * mm])
+    lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b9d2c2")),
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b6b3a")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eaf5ee")),
+                            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("ALIGN", (2, 0), (2, -1), "RIGHT")]))
+    story += [lt, Spacer(1, 6 * mm)]
+    if v["status"] == "Split into Installments":
+        story.append(Paragraph(
+            "This voucher has been split into installments and is NOT payable — "
+            "please pay the installment challans instead.", styles["BodyText"]))
+    else:
+        story.append(Paragraph(
+            "Payable at any bank branch / mobile wallet / RAAST. After payment, upload the "
+            "paid proof from your MY CUVAS student portal; the voucher is marked Paid after "
+            "verification by the accounts office.", styles["BodyText"]))
+    story += [Spacer(1, 8 * mm),
+              Paragraph("Generated by MY CUVAS (Demo) — all data shown is fictional demo data.",
+                        styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson (0-byte PDFs otherwise)
+    return buf.getvalue()
+
+
+def split_voucher(db, v):
+    """Split a Pending, childless voucher into 2 installments.
+    Returns (ok, message). Reverses the parent debit in the ledger and
+    debits the children, keeping statement totals exact."""
+    if v["status"] != "Pending":
+        return False, "Only a Pending voucher can be split into installments."
+    children = db.execute("SELECT COUNT(*) c FROM vouchers WHERE parent_voucher_id=?",
+                          (v["id"],)).fetchone()["c"]
+    if children:
+        return False, "This voucher has already been split into installments."
+    amount = v["amount"] or 0
+    if amount < 2:
+        return False, "Voucher amount is too small to split."
+    first = (amount + 1) // 2  # ceil half
+    parts = [(first, v["due_date"]), (amount - first, _add_days(v["due_date"], 30))]
+    db.execute("UPDATE vouchers SET status='Split into Installments' WHERE id=?", (v["id"],))
+    ledger_add(db, v, _today(),
+               f"Reversed — {v['title']} ({v['challan_no']}) split into installments",
+               debit=-amount)
+    for i, (amt, due) in enumerate(parts, 1):
+        title = f"{v['title']} — Installment {i} of 2"
+        challan = next_challan_no(db)
+        cid = db.insert(
+            """INSERT INTO vouchers (student_id,challan_no,title,amount,due_date,status,remarks,
+               session_id,semester_no,kind,parent_voucher_id,fee_plan_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (v["student_id"], challan, title, amt, due, "Pending", "",
+             v.get("session_id"), v.get("semester_no"), "installment", v["id"],
+             v.get("fee_plan_id")))
+        child = dict(v, id=cid, challan_no=challan, title=title)
+        ledger_add(db, child, _today(), f"{title} charged", debit=amt)
+    return True, "Voucher split into 2 installments."
+
+
+def _add_days(date_str, days):
+    try:
+        d = datetime.date.fromisoformat((date_str or "")[:10])
+    except ValueError:
+        d = datetime.date.today()
+    return (d + datetime.timedelta(days=days)).isoformat()
+
+
+# ---------------------------------------------------------------- fee heads (admin)
+@app.route("/admin/fee-heads")
+@role_required("admin")
+def admin_fee_heads():
+    rows = get_db().execute(
+        """SELECT h.*, (SELECT COUNT(*) FROM fee_plan_lines l WHERE l.head_id=h.id) use_count
+           FROM fee_heads h ORDER BY h.name""").fetchall()
+    return render_template("fee_heads.html", rows=rows)
+
+
+@app.route("/admin/fee-heads/new", methods=["POST"])
+@role_required("admin")
+def admin_fee_head_new():
+    db = get_db()
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Fee head name is required.", "error")
+    elif db.execute("SELECT id FROM fee_heads WHERE name=?", (name,)).fetchone():
+        flash(f"A fee head named '{name}' already exists.", "error")
+    else:
+        db.insert("INSERT INTO fee_heads (name) VALUES (?)", (name,))
+        db.commit()
+        flash(f"Fee head '{name}' added.", "ok")
+    return redirect(url_for("admin_fee_heads"))
+
+
+@app.route("/admin/fee-heads/<int:head_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_fee_head_edit(head_id):
+    db = get_db()
+    head = db.execute("SELECT * FROM fee_heads WHERE id=?", (head_id,)).fetchone()
+    if not head:
+        flash("Fee head not found.", "error")
+        return redirect(url_for("admin_fee_heads"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        clash = db.execute("SELECT id FROM fee_heads WHERE name=? AND id<>?",
+                           (name, head_id)).fetchone()
+        if not name:
+            flash("Fee head name is required.", "error")
+        elif clash:
+            flash(f"A fee head named '{name}' already exists.", "error")
+        else:
+            db.execute("UPDATE fee_heads SET name=? WHERE id=?", (name, head_id))
+            db.commit()
+            flash(f"Fee head renamed to '{name}'.", "ok")
+            return redirect(url_for("admin_fee_heads"))
+    return render_template("fee_head_form.html", head=head)
+
+
+@app.route("/admin/fee-heads/<int:head_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_fee_head_delete(head_id):
+    db = get_db()
+    head = db.execute("SELECT * FROM fee_heads WHERE id=?", (head_id,)).fetchone()
+    if not head:
+        flash("Fee head not found.", "error")
+        return redirect(url_for("admin_fee_heads"))
+    used = db.execute("SELECT COUNT(*) c FROM fee_plan_lines WHERE head_id=?",
+                      (head_id,)).fetchone()["c"]
+    if used:
+        flash(f"Cannot delete fee head '{head['name']}': it is used in {used} fee plan line(s).",
+              "error")
+        return redirect(url_for("admin_fee_heads"))
+    db.execute("DELETE FROM fee_heads WHERE id=?", (head_id,))
+    db.commit()
+    flash(f"Fee head '{head['name']}' deleted.", "ok")
+    return redirect(url_for("admin_fee_heads"))
+
+
+# ---------------------------------------------------------------- fee plans (admin)
+@app.route("/admin/fee-plans")
+@role_required("admin")
+def admin_fee_plans():
+    rows = get_db().execute(
+        """SELECT fp.*, p.name prog_name, ss.name sess_name,
+                  COALESCE((SELECT SUM(l.amount) FROM fee_plan_lines l WHERE l.plan_id=fp.id),0) total,
+                  (SELECT COUNT(*) FROM vouchers v WHERE v.fee_plan_id=fp.id) voucher_count
+           FROM fee_plans fp LEFT JOIN programs p ON p.id=fp.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=fp.session_id
+           ORDER BY p.name, fp.semester_no""").fetchall()
+    return render_template("fee_plans.html", rows=rows)
+
+
+def _fee_plan_form_values(db, plan=None):
+    lines = plan_lines(db, plan["id"]) if plan else []
+    return {"programs": program_options(db), "sessions": session_options(db),
+            "heads": db.execute("SELECT * FROM fee_heads ORDER BY name").fetchall(),
+            "plan": plan, "lines": lines}
+
+
+def _save_fee_plan(db, plan_id, form):
+    """Create (plan_id=None) or update a fee plan + its lines. Returns plan id
+    or None after flashing the problem. Caller commits."""
+    program_id = _int_or_none(form.get("program_id"))
+    session_id = _int_or_none(form.get("session_id"))
+    semester_no = _int_or_none(form.get("semester_no"))
+    title = form.get("title", "").strip()
+    due_date = form.get("due_date", "").strip()
+    if not program_id or not session_id or semester_no is None:
+        flash("Program, session and semester number are required.", "error")
+        return None
+    head_ids = form.getlist("line_head_id")
+    amounts = form.getlist("line_amount")
+    lines = []
+    for hid, amt in zip(head_ids, amounts):
+        hid, amt = _int_or_none(hid), _int_or_none(amt)
+        if hid and amt and amt > 0:
+            lines.append((hid, amt))
+    if not lines:
+        flash("Add at least one fee line (fee head + amount).", "error")
+        return None
+    if plan_id is None:
+        plan_id = db.insert(
+            "INSERT INTO fee_plans (program_id,session_id,semester_no,title,due_date) VALUES (?,?,?,?,?)",
+            (program_id, session_id, semester_no, title, due_date))
+    else:
+        db.execute(
+            "UPDATE fee_plans SET program_id=?,session_id=?,semester_no=?,title=?,due_date=? WHERE id=?",
+            (program_id, session_id, semester_no, title, due_date, plan_id))
+        db.execute("DELETE FROM fee_plan_lines WHERE plan_id=?", (plan_id,))
+    heads = {r["id"]: r["name"] for r in db.execute("SELECT id,name FROM fee_heads").fetchall()}
+    for hid, amt in lines:
+        db.insert(
+            "INSERT INTO fee_plan_lines (plan_id,head_id,head,amount) VALUES (?,?,?,?)",
+            (plan_id, hid, heads.get(hid), amt))
+    return plan_id
+
+
+@app.route("/admin/fee-plans/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_fee_plan_new():
+    db = get_db()
+    if request.method == "POST":
+        pid = _save_fee_plan(db, None, request.form)
+        if pid:
+            db.commit()
+            flash("Fee plan created.", "ok")
+            return redirect(url_for("admin_fee_plans"))
+        db.rollback()
+    return render_template("fee_plan_form.html", **_fee_plan_form_values(db))
+
+
+@app.route("/admin/fee-plans/<int:plan_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_fee_plan_edit(plan_id):
+    db = get_db()
+    plan = db.execute("SELECT * FROM fee_plans WHERE id=?", (plan_id,)).fetchone()
+    if not plan:
+        flash("Fee plan not found.", "error")
+        return redirect(url_for("admin_fee_plans"))
+    if request.method == "POST":
+        if _save_fee_plan(db, plan_id, request.form):
+            db.commit()
+            flash("Fee plan updated.", "ok")
+            return redirect(url_for("admin_fee_plans"))
+        db.rollback()
+    return render_template("fee_plan_form.html", **_fee_plan_form_values(db, plan))
+
+
+@app.route("/admin/fee-plans/<int:plan_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_fee_plan_delete(plan_id):
+    db = get_db()
+    plan = db.execute("SELECT * FROM fee_plans WHERE id=?", (plan_id,)).fetchone()
+    if not plan:
+        flash("Fee plan not found.", "error")
+        return redirect(url_for("admin_fee_plans"))
+    used = db.execute("SELECT COUNT(*) c FROM vouchers WHERE fee_plan_id=?",
+                      (plan_id,)).fetchone()["c"]
+    if used:
+        flash(f"Cannot delete this fee plan: {used} voucher(s) were already generated from it.",
+              "error")
+        return redirect(url_for("admin_fee_plans"))
+    db.execute("DELETE FROM fee_plan_lines WHERE plan_id=?", (plan_id,))
+    db.execute("DELETE FROM fee_plans WHERE id=?", (plan_id,))
+    db.commit()
+    flash("Fee plan deleted.", "ok")
+    return redirect(url_for("admin_fee_plans"))
+
+
+# ---------------------------------------------------------------- vouchers (admin)
+def _voucher_filter_sql(args):
+    clauses, params = [], []
+    status = (args.get("status") or "").strip()
+    if status in VOUCHER_STATUSES:
+        clauses.append("v.status=?")
+        params.append(status)
+    prog = _int_or_none(args.get("program_id"))
+    if prog:
+        clauses.append("s.program_id=?")
+        params.append(prog)
+    sess = _int_or_none(args.get("session_id"))
+    if sess:
+        clauses.append("COALESCE(v.session_id, s.session_id)=?")
+        params.append(sess)
+    q = (args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        clauses.append(f"(v.challan_no {LIKE} ? OR s.name {LIKE} ? OR s.registration_no {LIKE} ?)")
+        params += [like, like, like]
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+
+@app.route("/admin/vouchers")
+@role_required("admin")
+def admin_vouchers():
+    db = get_db()
+    where, params = _voucher_filter_sql(request.args)
+    rows = db.execute(
+        f"""SELECT v.*, s.name student_name, s.registration_no, p.name prog_name
+            FROM vouchers v JOIN students s ON s.id=v.student_id
+            LEFT JOIN programs p ON p.id=s.program_id {where} ORDER BY v.id DESC""",
+        params).fetchall()
+    counts = {s: db.execute("SELECT COUNT(*) c FROM vouchers WHERE status=?",
+                             (s,)).fetchone()["c"] for s in VOUCHER_STATUSES}
+    counts["total"] = db.execute("SELECT COUNT(*) c FROM vouchers").fetchone()["c"]
+    return render_template("admin_vouchers.html", rows=rows, counts=counts,
+                           programs=program_options(db), sessions=session_options(db),
+                           statuses=VOUCHER_STATUSES, args=request.args)
+
+
+def eligible_students(db, plan):
+    return db.execute(
+        """SELECT * FROM students WHERE program_id=? AND session_id=?
+           AND current_semester=? AND COALESCE(status,'Active')='Active' ORDER BY name""",
+        (plan["program_id"], plan["session_id"], plan["semester_no"])).fetchall()
+
+
+def create_plan_voucher(db, plan, student, due_date):
+    """Generate one voucher from a plan for a student + its debit ledger entry.
+    Returns the voucher id, or None if the student already has one from the plan."""
+    existing = db.execute(
+        "SELECT id FROM vouchers WHERE fee_plan_id=? AND student_id=?",
+        (plan["id"], student["id"])).fetchone()
+    if existing:
+        return None
+    sess = db.execute("SELECT name FROM academic_sessions WHERE id=?",
+                      (plan["session_id"],)).fetchone()
+    title = f"Semester {plan['semester_no']} Fee"
+    if sess:
+        title += f" — {sess['name']}"
+    total = plan_total(db, plan["id"])
+    challan = next_challan_no(db)
+    vid = db.insert(
+        """INSERT INTO vouchers (student_id,challan_no,title,amount,due_date,status,remarks,
+           session_id,semester_no,kind,fee_plan_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (student["id"], challan, title, total, due_date, "Pending", "",
+         plan["session_id"], plan["semester_no"], "semester", plan["id"]))
+    v = {"id": vid, "student_id": student["id"], "challan_no": challan, "title": title}
+    ledger_add(db, v, _today(), f"{title} charged", debit=total)
+    return vid
+
+
+@app.route("/admin/vouchers/generate", methods=["GET", "POST"])
+@role_required("admin")
+def admin_voucher_generate():
+    db = get_db()
+    plans = db.execute(
+        """SELECT fp.*, p.name prog_name, ss.name sess_name FROM fee_plans fp
+           LEFT JOIN programs p ON p.id=fp.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=fp.session_id ORDER BY fp.id DESC""").fetchall()
+    plan = None
+    plan_id = _int_or_none(request.values.get("plan_id"))
+    if plan_id:
+        plan = db.execute("SELECT * FROM fee_plans WHERE id=?", (plan_id,)).fetchone()
+    if request.method == "POST":
+        if not plan:
+            flash("Please choose a fee plan first.", "error")
+            return redirect(url_for("admin_voucher_generate"))
+        due_date = request.form.get("due_date", "").strip() or plan.get("due_date") or _today()
+        targets = eligible_students(db, plan)
+        chosen = request.form.get("student_id", "")
+        if chosen and chosen != "all":
+            sid = _int_or_none(chosen)
+            targets = [s for s in targets if s["id"] == sid]
+            if not targets:
+                flash("That student is not eligible for this plan "
+                      "(program / session / semester / status must match).", "error")
+                return redirect(url_for("admin_voucher_generate", plan_id=plan["id"]))
+        created = skipped = 0
+        for s in targets:
+            if create_plan_voucher(db, plan, s, due_date):
+                created += 1
+            else:
+                skipped += 1
+        db.commit()
+        flash(f"Voucher generation complete — created {created}, skipped {skipped} "
+              f"(already had a voucher from this plan).", "ok" if created else "error")
+        return redirect(url_for("admin_vouchers"))
+    students = eligible_students(db, plan) if plan else []
+    return render_template("voucher_generate.html", plans=plans, plan=plan,
+                           students=students,
+                           plan_total_due=plan_total(db, plan["id"]) if plan else 0)
+
+
+@app.route("/admin/vouchers/<int:voucher_id>")
+@role_required("admin")
+def admin_voucher_detail(voucher_id):
+    db = get_db()
+    v = get_voucher(db, voucher_id)
+    if not v:
+        flash("Voucher not found.", "error")
+        return redirect(url_for("admin_vouchers"))
+    children = db.execute("SELECT * FROM vouchers WHERE parent_voucher_id=? ORDER BY id",
+                          (voucher_id,)).fetchall()
+    parent = db.execute("SELECT * FROM vouchers WHERE id=?",
+                        (v["parent_voucher_id"],)).fetchone() if v.get("parent_voucher_id") else None
+    entries = db.execute("SELECT * FROM ledger_entries WHERE voucher_id=? ORDER BY id",
+                         (voucher_id,)).fetchall()
+    return render_template("voucher_detail.html", v=v, children=children, parent=parent,
+                           breakdown=voucher_breakdown(db, v), entries=entries,
+                           channels=PAYMENT_CHANNELS)
+
+
+@app.route("/admin/vouchers/<int:voucher_id>/challan.pdf")
+@role_required("admin")
+def admin_voucher_challan(voucher_id):
+    db = get_db()
+    v = get_voucher(db, voucher_id)
+    if not v:
+        abort(404)
+    return send_file(io.BytesIO(build_challan_pdf(db, v)), as_attachment=True,
+                     download_name=f"challan-{v['challan_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/admin/vouchers/<int:voucher_id>/proof")
+@role_required("admin")
+def admin_voucher_proof(voucher_id):
+    db = get_db()
+    v = db.execute("SELECT * FROM vouchers WHERE id=?", (voucher_id,)).fetchone()
+    if not v or not v.get("proof_blob"):
+        abort(404)
+    return send_file(io.BytesIO(bytes(v["proof_blob"])), as_attachment=True,
+                     download_name=v.get("proof_filename") or f"proof-{voucher_id}",
+                     mimetype=v.get("proof_mimetype") or "application/octet-stream")
+
+
+@app.route("/admin/vouchers/<int:voucher_id>/verify", methods=["POST"])
+@role_required("admin")
+def admin_voucher_verify(voucher_id):
+    db = get_db()
+    v = get_voucher(db, voucher_id)
+    if not v:
+        flash("Voucher not found.", "error")
+        return redirect(url_for("admin_vouchers"))
+    if v["status"] == "Paid":
+        flash("This voucher is already Paid — it cannot be verified twice.", "error")
+        return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+    if v["status"] != "Proof Submitted":
+        flash("Only a voucher with a submitted paid proof can be verified.", "error")
+        return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+    db.execute("UPDATE vouchers SET status='Paid', paid_at=? WHERE id=?",
+               (_now(), voucher_id))
+    already = db.execute(
+        "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND credit>0",
+        (voucher_id,)).fetchone()["c"]
+    if not already:  # credit exactly once
+        channel = v.get("payment_channel") or "Bank"
+        ledger_add(db, v, _today(), f"Payment received — {channel}", credit=v["amount"] or 0)
+    db.commit()
+    flash(f"Voucher {v['challan_no']} verified — marked Paid.", "ok")
+    return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+
+
+@app.route("/admin/vouchers/<int:voucher_id>/reject", methods=["POST"])
+@role_required("admin")
+def admin_voucher_reject(voucher_id):
+    db = get_db()
+    v = get_voucher(db, voucher_id)
+    if not v:
+        flash("Voucher not found.", "error")
+        return redirect(url_for("admin_vouchers"))
+    if v["status"] != "Proof Submitted":
+        flash("Only a voucher with a submitted paid proof can be rejected.", "error")
+        return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+    remark = request.form.get("remark", "").strip() or "Paid proof rejected — please upload a clear copy."
+    db.execute("UPDATE vouchers SET status='Pending', remarks=? WHERE id=?",
+               (remark, voucher_id))
+    db.commit()
+    flash(f"Proof for {v['challan_no']} rejected — voucher is Pending again.", "ok")
+    return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+
+
+@app.route("/admin/vouchers/<int:voucher_id>/installments", methods=["POST"])
+@role_required("admin")
+def admin_voucher_installments(voucher_id):
+    db = get_db()
+    v = get_voucher(db, voucher_id)
+    if not v:
+        flash("Voucher not found.", "error")
+        return redirect(url_for("admin_vouchers"))
+    ok, msg = split_voucher(db, v)
+    db.commit() if ok else db.rollback()
+    flash(msg, "ok" if ok else "error")
+    return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+
+
+# ---------------------------------------------------------------- vouchers (student)
+def _own_voucher_or_none(db, voucher_id):
+    v = get_voucher(db, voucher_id)
+    if not v or v["student_id"] != session.get("student_id"):
+        return None
+    return v
+
+
+@app.route("/student/vouchers/<int:voucher_id>/challan.pdf")
+@role_required("student")
+def student_voucher_challan(voucher_id):
+    db = get_db()
+    v = _own_voucher_or_none(db, voucher_id)
+    if not v:
+        flash("That voucher does not belong to your account.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    return send_file(io.BytesIO(build_challan_pdf(db, v)), as_attachment=True,
+                     download_name=f"challan-{v['challan_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/student/vouchers/<int:voucher_id>/installments", methods=["POST"])
+@role_required("student")
+def student_voucher_installments(voucher_id):
+    db = get_db()
+    v = _own_voucher_or_none(db, voucher_id)
+    if not v:
+        flash("That voucher does not belong to your account.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    ok, msg = split_voucher(db, v)
+    db.commit() if ok else db.rollback()
+    flash(msg, "ok" if ok else "error")
+    return redirect(url_for("student_dashboard", tab="voucher"))
+
+
+@app.route("/student/vouchers/<int:voucher_id>/proof", methods=["POST"])
+@role_required("student")
+def student_voucher_proof(voucher_id):
+    db = get_db()
+    v = _own_voucher_or_none(db, voucher_id)
+    if not v:
+        flash("That voucher does not belong to your account.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    if v["status"] != "Pending":
+        flash("Paid proof can only be uploaded for a Pending voucher.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    f = request.files.get("proof")
+    channel = request.form.get("payment_channel", "Bank")
+    if channel not in PAYMENT_CHANNELS:
+        channel = "Bank"
+    if not f or not f.filename:
+        flash("Please choose the paid voucher image/PDF file first.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    blob = f.read()
+    if not blob:
+        flash("That file is empty.", "error")
+        return redirect(url_for("student_dashboard", tab="voucher"))
+    db.execute(
+        """UPDATE vouchers SET status='Proof Submitted', proof_blob=?, proof_filename=?,
+           proof_mimetype=?, payment_channel=? WHERE id=?""",
+        (blob, f.filename, f.mimetype or "application/octet-stream", channel, voucher_id))
+    db.commit()
+    flash(f"Paid proof for challan {v['challan_no']} submitted via {channel} — "
+          f"it will be marked Paid after verification.", "ok")
+    return redirect(url_for("student_dashboard", tab="voucher"))
 
 
 if __name__ == "__main__":

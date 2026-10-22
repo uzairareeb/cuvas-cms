@@ -1,0 +1,39 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit' if plan else 'New' }} Fee Plan</h2>
+<div class="form-card wide"><form method="post" id="plan-form">
+<div class="form-grid">
+<div><label>Program</label>
+<select name="program_id" required><option value="">— choose program —</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if plan and plan.program_id==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select></div>
+<div><label>Session</label>
+<select name="session_id" required><option value="">— choose session —</option>
+{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if plan and plan.session_id==s.id else '' }}>{{ s.name }}</option>{% endfor %}</select></div>
+<div><label>Semester No</label>
+<input type="number" name="semester_no" min="1" max="12" required value="{{ plan.semester_no if plan else '' }}"></div>
+<div><label>Default Due Date</label>
+<input type="date" name="due_date" value="{{ plan.due_date if plan and plan.due_date else '' }}"></div>
+</div>
+<label>Plan Title (optional)</label>
+<input name="title" value="{{ plan.title if plan and plan.title else '' }}" placeholder="e.g. Semester Fee Plan — Fall 2026">
+<h3>Fee Lines</h3>
+<table id="lines-table"><tr><th>Fee Head</th><th>Amount (Rs)</th><th></th></tr>
+{% for l in lines %}<tr class="line-row"><td><select name="line_head_id">{% for h in heads %}<option value="{{ h.id }}" {{ 'selected' if l.head_id==h.id else '' }}>{{ h.name }}</option>{% endfor %}</select></td>
+<td><input type="number" name="line_amount" min="1" value="{{ l.amount }}"></td>
+<td><button class="btn small danger" type="button" onclick="this.closest('tr').remove()">Remove</button></td></tr>{% endfor %}
+<tr class="line-row"><td><select name="line_head_id"><option value="">— choose fee head —</option>{% for h in heads %}<option value="{{ h.id }}">{{ h.name }}</option>{% endfor %}</select></td>
+<td><input type="number" name="line_amount" min="1" placeholder="Amount"></td>
+<td><button class="btn small danger" type="button" onclick="this.closest('tr').remove()">Remove</button></td></tr>
+</table>
+<p><button class="btn small ghost" type="button" id="add-line">+ Add Line</button></p>
+<div class="form-actions"><button class="btn green" type="submit">Save Fee Plan</button>
+<a class="btn ghost" href="{{ url_for('admin_fee_plans') }}">Cancel</a></div>
+</form></div>
+<script>
+document.getElementById('add-line').addEventListener('click', function(){
+  var rows = document.querySelectorAll('#lines-table .line-row');
+  var clone = rows[rows.length-1].cloneNode(true);
+  clone.querySelectorAll('input').forEach(function(i){ i.value=''; });
+  document.getElementById('lines-table').appendChild(clone);
+});
+</script>
+{% endblock %}

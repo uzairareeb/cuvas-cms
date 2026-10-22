@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Vouchers <span class="muted">({{ counts.total }})</span></h2>
+<div><a class="btn green" href="{{ url_for('admin_voucher_generate') }}">+ Generate Vouchers</a></div></div>
+<div class="grid" style="margin-bottom:18px">
+<div class="card kpi"><div class="num">{{ counts['Pending'] }}</div><div class="lbl">Pending</div></div>
+<div class="card kpi gold"><div class="num">{{ counts['Proof Submitted'] }}</div><div class="lbl">Proof Submitted</div></div>
+<div class="card kpi teal"><div class="num">{{ counts['Paid'] }}</div><div class="lbl">Paid</div></div>
+<div class="card kpi red"><div class="num">{{ counts['Split into Installments'] }}</div><div class="lbl">Split into Installments</div></div>
+</div>
+<form method="get" class="filter-bar">
+<input name="q" placeholder="Search challan / student / reg. no" value="{{ args.get('q','') }}" style="min-width:220px">
+<select name="status"><option value="">All statuses</option>
+{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if args.get('status')==s else '' }}>{{ s }}</option>{% endfor %}</select>
+<select name="program_id"><option value="">All programs</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if args.get('program_id')==p.id|string else '' }}>{{ p.name }}</option>{% endfor %}</select>
+<select name="session_id"><option value="">All sessions</option>
+{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if args.get('session_id')==s.id|string else '' }}>{{ s.name }}</option>{% endfor %}</select>
+<button class="btn green" type="submit">Filter</button>
+<a class="btn ghost" href="{{ url_for('admin_vouchers') }}">Reset</a></form>
+<table><tr><th>Challan #</th><th>Student</th><th>Title</th><th>Kind</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
+{% for v in rows %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}<br><span class="muted">{{ v.registration_no }}</span></td><td>{{ v.title }}</td><td>{{ v.kind or 'semester' }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date or '—' }}</td>
+<td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span></td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_voucher_detail', voucher_id=v.id) }}">Detail</a>
+<a class="btn small" href="{{ url_for('admin_voucher_challan', voucher_id=v.id) }}">Challan PDF</a>
+{% if v.status=='Proof Submitted' %}<a class="btn small green" href="{{ url_for('admin_voucher_detail', voucher_id=v.id) }}">Verify Proof</a>{% endif %}</td></tr>
+{% else %}<tr><td colspan="8">No vouchers match.</td></tr>{% endfor %}</table>
+{% endblock %}

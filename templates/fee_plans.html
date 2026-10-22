@@ -1,0 +1,11 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Fee Plans</h2>
+<div><a class="btn green" href="{{ url_for('admin_fee_plan_new') }}">+ New Fee Plan</a></div></div>
+<p class="muted">A fee plan fixes the semester fee for one program + session + semester. Vouchers are generated from plans — a plan with vouchers cannot be deleted.</p>
+<table><tr><th>Title</th><th>Program</th><th>Session</th><th>Semester</th><th>Default Due Date</th><th>Total (Rs)</th><th>Vouchers</th><th>Actions</th></tr>
+{% for p in rows %}<tr><td>{{ p.title or '—' }}</td><td>{{ p.prog_name or '—' }}</td><td>{{ p.sess_name or '—' }}</td><td>{{ p.semester_no }}</td><td>{{ p.due_date or '—' }}</td><td>{{ "{:,}".format(p.total) }}</td><td>{{ p.voucher_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_fee_plan_edit', plan_id=p.id) }}">Edit</a>
+<a class="btn small" href="{{ url_for('admin_voucher_generate', plan_id=p.id) }}">Generate Vouchers</a>
+<form method="post" action="{{ url_for('admin_fee_plan_delete', plan_id=p.id) }}" onsubmit="return confirm('Delete this fee plan?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="8">No fee plans yet. Create one to start generating vouchers.</td></tr>{% endfor %}</table>
+{% endblock %}

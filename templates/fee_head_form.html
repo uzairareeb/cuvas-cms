@@ -1,0 +1,9 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Edit Fee Head</h2>
+<div class="form-card"><form method="post">
+<label>Fee head name</label>
+<input name="name" required value="{{ head.name }}">
+<div class="form-actions"><button class="btn green" type="submit">Save</button>
+<a class="btn ghost" href="{{ url_for('admin_fee_heads') }}">Cancel</a></div>
+</form></div>
+{% endblock %}
