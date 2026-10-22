@@ -1,0 +1,22 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Grading Scale</h2></div>
+<p class="muted">Grades and grade points are <strong>derived from obtained marks</strong> using these bands — the same scale drives marks entry, the student transcript (web) and the transcript PDF. Change a band here and every derived grade follows.</p>
+<form method="post" class="form-card">
+<table><tr><th>Marks From</th><th>Marks To</th><th>Grade</th><th>Grade Point</th><th></th></tr>
+{% for b in bands %}<tr>
+<td><input type="hidden" name="band_id" value="{{ b.id }}"><input name="min_{{ b.id }}" type="number" step="0.5" min="0" max="100" value="{{ b.min_marks }}" style="width:90px"></td>
+<td>{{ b.max_marks }}</td>
+<td><input name="grade_{{ b.id }}" value="{{ b.grade }}" style="width:70px"></td>
+<td><input name="gp_{{ b.id }}" type="number" step="0.01" min="0" max="5" value="{{ b.grade_point }}" style="width:90px"></td>
+<td class="actions"><button class="btn small danger" type="submit" formmethod="post" formaction="{{ url_for('admin_grade_scale_delete', band_id=b.id) }}" onclick="return confirm('Delete grade band {{ b.grade }}?');">Delete</button></td>
+</tr>{% else %}<tr><td colspan="5">No grade bands yet — add one below.</td></tr>{% endfor %}</table>
+<div class="form-actions"><button class="btn green" type="submit">Save Scale</button></div>
+</form>
+<div class="form-card" style="margin-top:18px"><h3 style="margin-top:0">Add Band</h3>
+<form method="post" action="{{ url_for('admin_grade_scale_add') }}">
+<label>Min marks (band starts at)</label><input name="min_marks" type="number" step="0.5" min="0" max="100" required style="width:120px">
+<label>Grade</label><input name="grade" required style="width:90px">
+<label>Grade point</label><input name="grade_point" type="number" step="0.01" min="0" max="5" required style="width:120px">
+<div class="form-actions"><button class="btn green" type="submit">+ Add Band</button></div>
+</form></div>
+{% endblock %}

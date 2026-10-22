@@ -1,0 +1,37 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Marks Sheet — {{ course.code }}</h2>
+<div><a class="btn ghost" href="{{ url_for('admin_results') }}">← All Results</a></div></div>
+<p class="muted">{{ course.title }} · {{ program.name if program else '' }} · {{ session_row.name if session_row else '' }} · Semester {{ semester_no }} ·
+<strong>{{ published }} of {{ total }} results published</strong> — students only see published results on their transcript. Grades are derived automatically from marks (see the <a href="{{ url_for('admin_grade_scale') }}">grading scale</a>).</p>
+
+<div class="toolbar">
+<form method="post" action="{{ url_for('admin_results_publish', course_id=course.id, session_id=session_id) }}">
+<button class="btn green" name="action" value="publish" type="submit">✔ Publish All</button>
+<button class="btn ghost" name="action" value="unpublish" type="submit">Unpublish All</button>
+</form>
+<div>
+<a class="btn ghost" href="{{ url_for('admin_results_sheet_xlsx', course_id=course.id, session_id=session_id) }}">⬇ Download Marks Sheet (.xlsx)</a>
+</div></div>
+
+<form method="post" action="{{ url_for('admin_results_import', course_id=course.id, session_id=session_id) }}" enctype="multipart/form-data" class="filter-bar">
+<label style="align-self:center">Import filled marks sheet:</label>
+<input type="file" name="file" accept=".xlsx" required>
+<button class="btn green" type="submit">⬆ Import Marks (.xlsx)</button>
+</form>
+
+<form method="post">
+<table><tr><th>Reg. No</th><th>Student</th><th>Marks (0–100)</th><th>Absent</th><th>Grade</th><th>GP</th><th>Status</th><th>Clear</th></tr>
+{% for r in rows %}{% set s = r.student %}{% set res = r.result %}
+<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td>
+<td><input name="marks_{{ s.id }}" type="number" step="0.5" min="0" max="100" style="width:110px"
+value="{{ res.marks_obtained if res and res.marks_obtained is not none else '' }}" placeholder="—"></td>
+<td><input name="absent_{{ s.id }}" type="checkbox" {{ 'checked' if res and res.is_absent else '' }}></td>
+<td>{{ res and r.grade or '—' }}</td><td>{{ r.gp if r.gp is not none else '—' }}</td>
+<td>{% if res %}<span class="pill {{ 'paid' if res.is_published else 'pending' }}">{{ 'Published' if res.is_published else 'Unpublished' }}</span>{% else %}<span class="muted">No result</span>{% endif %}</td>
+<td><input name="clear_{{ s.id }}" type="checkbox" title="Delete this result on save"></td></tr>
+{% else %}<tr><td colspan="8">No students found for this program + session. Add students first (Students → Add / Excel Import).</td></tr>{% endfor %}
+</table>
+<p class="muted">Leave marks blank to keep a row unchanged; tick <em>Clear</em> to delete a result; tick <em>Absent</em> to record an absence (counts as F).</p>
+<div class="form-actions"><button class="btn green" type="submit">💾 Save Marks Sheet</button></div>
+</form>
+{% endblock %}

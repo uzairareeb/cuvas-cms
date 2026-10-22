@@ -51,9 +51,11 @@
 
 <section class="tab-pane" id="pane-transcript"><div class="card"><h3>Transcript</h3>
 <p>Overall CGPA: <strong>{{ cgpa }}</strong></p>
+<p><a class="btn green" href="{{ url_for('student_transcript_pdf') }}">⬇ Download Transcript (PDF)</a>
+<a class="btn ghost" href="{{ url_for('student_slip_pdf') }}">⬇ Roll Number Slip (PDF)</a></p>
 {% for sem, block in transcript.items() %}<h4>Semester {{ sem }} — SGPA: {{ block.sgpa }} · CGPA: {{ block.cgpa }}</h4>
-<table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
-{% for r in block.rows %}<tr><td>{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.credits }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}</td></tr>{% endfor %}</table>{% endfor %}
+<table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Marks</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
+{% for r in block.rows %}<tr><td>{{ r.code }}</td><td>{{ r.title }}</td><td>{{ r.credits }}</td><td>{{ r.marks_display }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}</td></tr>{% endfor %}</table>{% endfor %}
 </div></section>
 
 <section class="tab-pane" id="pane-voucher"><div class="card"><h3>Financial Vouchers</h3>

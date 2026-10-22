@@ -1,0 +1,16 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Marks Import Result — {{ course.code }}</h2>
+<div class="grid">
+<div class="card kpi"><div class="num">{{ imported|length }}</div><div class="lbl">Imported</div></div>
+<div class="card kpi red"><div class="num">{{ skipped|length }}</div><div class="lbl">Skipped</div></div>
+</div>
+{% if imported %}<h3 style="margin-top:22px">Imported</h3>
+<table><tr><th>Registration No</th></tr>
+{% for reg in imported %}<tr><td>{{ reg }}</td></tr>{% endfor %}</table>{% endif %}
+{% if skipped %}<h3 style="margin-top:22px">Skipped Rows (nothing was saved for these)</h3>
+<table><tr><th>Excel Row</th><th>Registration No</th><th>Reason</th></tr>
+{% for lineno, reg, reason in skipped %}<tr><td>{{ lineno }}</td><td>{{ reg }}</td><td>{{ reason }}</td></tr>{% endfor %}</table>{% endif %}
+<p class="muted" style="margin-top:14px">Imported results start <strong>unpublished</strong> — publish them from the marks sheet when ready.</p>
+<p style="margin-top:14px"><a class="btn green" href="{{ url_for('admin_results_sheet', course_id=course.id, session_id=session_id) }}">Back to Marks Sheet</a>
+<a class="btn ghost" href="{{ url_for('admin_results') }}">All Results</a></p>
+{% endblock %}

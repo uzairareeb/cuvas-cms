@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.3
+MY CUVAS — Campus Management System (Demo) v0.4
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -10,6 +10,10 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      (single + bulk) with sequential challan numbers, challan PDF (ReportLab),
      2-installment splits, paid-proof upload stored as a DB blob, admin
      verify/reject, and a real append-only ledger behind the Account Statement.
+  9. v0.4 results & exams — editable grading scale (grade_bands), marks entry
+     sheets with publish/unpublish, marks Excel download/import, transcripts
+     driven by published results (one SGPA/CGPA helper for web tab + PDF),
+     transcript PDF, and roll number slips (single + bulk PDF).
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -192,6 +196,10 @@ DDL = [
         semester_no INTEGER, title TEXT, due_date TEXT)""",
     f"""CREATE TABLE IF NOT EXISTS counters (
         name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)""",
+    # --- v0.4 results / grading ---
+    f"""CREATE TABLE IF NOT EXISTS grade_bands (
+        id {_PK}, min_marks REAL NOT NULL, grade TEXT NOT NULL,
+        grade_point REAL NOT NULL)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -209,6 +217,11 @@ EXTRA_COLUMNS = {
                  ("proof_blob", "BYTEA" if PG else "BLOB")],
     "fee_plan_lines": [("plan_id", "INTEGER"), ("head_id", "INTEGER")],
     "ledger_entries": [("voucher_id", "INTEGER")],
+    # --- v0.4 results columns (marks, publish state, session/enrollment link) ---
+    "results": [("session_id", "INTEGER"), ("marks_obtained", "REAL"),
+                ("is_absent", "INTEGER DEFAULT 0"),
+                ("is_published", "INTEGER DEFAULT 0"),
+                ("enrollment_id", "INTEGER")],
 }
 
 
@@ -233,6 +246,7 @@ def init_db():
     db.commit()
     seed(db)
     backfill_v03(db)
+    backfill_v04(db)
     db.commit()
     db.conn.close()
 
@@ -344,6 +358,30 @@ def backfill_v03(db):
                     (v["student_id"], v["id"], v["title"], v["challan_no"],
                      (v.get("paid_at") or _today())[:10],
                      f"Payment received — {channel}", 0, v["amount"] or 0))
+
+
+# ------------------------------------------------------- v0.4 results backfill
+DEFAULT_GRADE_BANDS = [
+    (85, "A", 4.00), (80, "A-", 3.70), (75, "B+", 3.30), (70, "B", 3.00),
+    (65, "B-", 2.70), (60, "C+", 2.30), (55, "C", 2.00), (50, "D", 1.00),
+    (0, "F", 0.00),
+]
+
+
+def backfill_v04(db):
+    """Idempotent v0.4 migration: seed the default grading scale, and mark the
+    pre-v0.4 seeded demo results as published (they pre-date marks entry, so
+    they are recognised by: not absent, no marks recorded, a stored grade).
+    Rows created by the v0.4 marks sheet always carry marks or the absent
+    flag, so this never re-publishes results an admin has unpublished."""
+    if not db.execute("SELECT COUNT(*) c FROM grade_bands").fetchone()["c"]:
+        for min_marks, grade, gp in DEFAULT_GRADE_BANDS:
+            db.insert("INSERT INTO grade_bands (min_marks,grade,grade_point) VALUES (?,?,?)",
+                      (min_marks, grade, gp))
+    db.execute(
+        """UPDATE results SET is_published=1
+           WHERE COALESCE(is_published,0)=0 AND COALESCE(is_absent,0)=0
+             AND marks_obtained IS NULL AND grade IS NOT NULL""")
 
 
 def _today():
@@ -1409,22 +1447,8 @@ def student_dashboard():
     plan_hours = {sem: sum((x["credit_theory"] or 0) + (x["credit_lab"] or 0) for x in rows)
                   for sem, rows in plan.items()}
 
-    transcript, cumulative_qp, cumulative_ch, cgpa = {}, 0.0, 0, 0.0
-    for sem in sorted({r["semester_no"] for r in db.execute(
-            "SELECT DISTINCT semester_no FROM results WHERE student_id=?", (sid,)).fetchall()}):
-        rows = db.execute(
-            """SELECT r.*, c.code, c.title, c.credit_theory, c.credit_lab
-               FROM results r JOIN courses c ON c.id=r.course_id
-               WHERE r.student_id=? AND r.semester_no=? ORDER BY c.code""", (sid, sem)).fetchall()
-        items, qp, ch = [], 0.0, 0
-        for r in rows:
-            credits = (r["credit_theory"] or 0) + (r["credit_lab"] or 0)
-            points = round(r["grade_point"] * credits, 2)
-            qp += points; ch += credits
-            items.append({**r, "credits": credits, "quality_points": points})
-        cumulative_qp += qp; cumulative_ch += ch
-        cgpa = round(cumulative_qp / cumulative_ch, 2) if cumulative_ch else 0.0
-        transcript[sem] = {"rows": items, "sgpa": round(qp / ch, 2) if ch else 0.0, "cgpa": cgpa}
+    # transcript: published results only, grades derived via the shared helper
+    transcript, cgpa, cumulative_ch = transcript_data(db, sid, published_only=True)
 
     vouchers = db.execute("SELECT * FROM vouchers WHERE student_id=? ORDER BY id", (sid,)).fetchall()
     voucher_children = {v["id"] for v in vouchers if v.get("parent_voucher_id")}
@@ -2133,6 +2157,763 @@ def student_voucher_proof(voucher_id):
     flash(f"Paid proof for challan {v['challan_no']} submitted via {channel} — "
           f"it will be marked Paid after verification.", "ok")
     return redirect(url_for("student_dashboard", tab="voucher"))
+
+
+# ================================================================ v0.4 RESULTS
+# Grading scale, marks entry, transcripts and roll number slips. Rules:
+#   * grade + grade point for a marks-based result are ALWAYS derived from
+#     grade_bands (single helper) — entry screens, the transcript web tab and
+#     the transcript PDF all read the same computation, so numbers match;
+#   * pre-v0.4 seeded results carry no marks: they keep their stored grade /
+#     grade point (legacy fallback in result_grade_gp) and are published by
+#     the v0.4 backfill, which keeps the demo transcript exactly as it was;
+#   * students only ever see PUBLISHED results on their transcript.
+
+def get_grade_bands(db):
+    return db.execute(
+        "SELECT * FROM grade_bands ORDER BY min_marks DESC").fetchall()
+
+
+def grade_for_marks(marks, is_absent, bands):
+    """(grade, grade_point) derived from obtained marks via the bands."""
+    if is_absent:
+        return "F", 0.0
+    if marks is None:
+        return None, None
+    for b in bands:  # bands sorted by min_marks DESC
+        if marks >= b["min_marks"]:
+            return b["grade"], float(b["grade_point"])
+    return "F", 0.0
+
+
+def result_grade_gp(row, bands):
+    """Grade/GP actually shown for a result row: derived from marks when the
+    row has marks (or the absent flag); legacy seeded rows fall back to the
+    grade / grade point stored on the row."""
+    if row.get("is_absent"):
+        return "F", 0.0
+    if row.get("marks_obtained") is not None:
+        return grade_for_marks(float(row["marks_obtained"]), False, bands)
+    return row.get("grade"), float(row.get("grade_point") or 0.0)
+
+
+def transcript_data(db, student_id, published_only=True):
+    """The ONE transcript computation, used by the student web tab and the
+    transcript PDF. Returns (transcript, cgpa, total_credit_hours) where
+    transcript = {semester_no: {"rows": [...], "sgpa": x, "cgpa": running}}."""
+    bands = get_grade_bands(db)
+    pub = " AND COALESCE(r.is_published,0)=1" if published_only else ""
+    rows = db.execute(
+        f"""SELECT r.*, c.code, c.title, c.credit_theory, c.credit_lab
+            FROM results r JOIN courses c ON c.id=r.course_id
+            WHERE r.student_id=?{pub} ORDER BY r.semester_no, c.code""",
+        (student_id,)).fetchall()
+    transcript, cumulative_qp, cumulative_ch, cgpa = {}, 0.0, 0, 0.0
+    for sem in sorted({r["semester_no"] for r in rows}):
+        items, qp, ch = [], 0.0, 0
+        for r in [x for x in rows if x["semester_no"] == sem]:
+            credits = (r["credit_theory"] or 0) + (r["credit_lab"] or 0)
+            grade, gp = result_grade_gp(r, bands)
+            points = round((gp or 0.0) * credits, 2)
+            qp += points
+            ch += credits
+            marks = r.get("marks_obtained")
+            items.append({**r, "credits": credits, "grade": grade,
+                          "grade_point": gp, "quality_points": points,
+                          "marks_display": ("Absent" if r.get("is_absent") else
+                                            ("—" if marks is None else
+                                             (f"{marks:g}" if isinstance(marks, float) else str(marks))))})
+        cumulative_qp += qp
+        cumulative_ch += ch
+        cgpa = round(cumulative_qp / cumulative_ch, 2) if cumulative_ch else 0.0
+        transcript[sem] = {"rows": items,
+                           "sgpa": round(qp / ch, 2) if ch else 0.0, "cgpa": cgpa}
+    return transcript, cgpa, cumulative_ch
+
+
+def find_result(db, student_id, course_id, semester_no, session_id):
+    """A student's result for a course/semester, preferring the row recorded
+    for this session; pre-v0.4 rows have session_id NULL and match any sheet."""
+    return db.execute(
+        """SELECT * FROM results WHERE student_id=? AND course_id=? AND semester_no=?
+           AND (session_id=? OR session_id IS NULL)
+           ORDER BY CASE WHEN session_id IS NULL THEN 1 ELSE 0 END, id LIMIT 1""",
+        (student_id, course_id, semester_no, session_id)).fetchone()
+
+
+def ensure_enrollment(db, student, course, session_id, semester_no):
+    enr = db.execute(
+        "SELECT * FROM enrollments WHERE student_id=? AND course_id=?",
+        (student["id"], course["id"])).fetchone()
+    if enr:
+        return enr["id"]
+    sess = db.execute("SELECT name FROM academic_sessions WHERE id=?",
+                      (session_id,)).fetchone() if session_id else None
+    return db.insert(
+        "INSERT INTO enrollments (student_id,course_id,session_name,semester_no) VALUES (?,?,?,?)",
+        (student["id"], course["id"], sess["name"] if sess else student.get("session_name"),
+         semester_no))
+
+
+def save_result(db, student, course, session_id, semester_no, marks, is_absent, bands):
+    """Insert or update one result (marks + derived grade stored as a cache;
+    the transcript always re-derives). Returns the result id. Caller commits."""
+    grade, gp = grade_for_marks(marks, is_absent, bands)
+    remarks = "Absent" if is_absent else ("Pass" if (gp or 0) > 0 else "Fail")
+    enr_id = ensure_enrollment(db, student, course, session_id, semester_no)
+    existing = find_result(db, student["id"], course["id"], semester_no, session_id)
+    if existing:
+        db.execute(
+            """UPDATE results SET session_id=?, enrollment_id=?, marks_obtained=?,
+               is_absent=?, grade=?, grade_point=?, remarks=? WHERE id=?""",
+            (session_id, enr_id, marks, 1 if is_absent else 0, grade, gp, remarks,
+             existing["id"]))
+        return existing["id"]
+    return db.insert(
+        """INSERT INTO results (student_id,course_id,semester_no,grade,grade_point,remarks,
+           session_id,marks_obtained,is_absent,is_published,enrollment_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (student["id"], course["id"], semester_no, grade, gp, remarks,
+         session_id, marks, 1 if is_absent else 0, 0, enr_id))
+
+
+def sheet_students(db, program_id, session_id, course_id, semester_no):
+    """Class list for a marks sheet: Active students of program+session, plus
+    any student who already has a result for this course set."""
+    rows = db.execute(
+        """SELECT * FROM students WHERE program_id=? AND session_id=?
+           AND COALESCE(status,'Active')='Active'""",
+        (program_id, session_id)).fetchall() if program_id and session_id else []
+    seen = {s["id"] for s in rows}
+    for r in db.execute(
+            """SELECT DISTINCT student_id FROM results WHERE course_id=? AND semester_no=?
+               AND (session_id=? OR session_id IS NULL)""",
+            (course_id, semester_no, session_id)).fetchall():
+        if r["student_id"] not in seen:
+            s = db.execute("SELECT * FROM students WHERE id=?",
+                           (r["student_id"],)).fetchone()
+            if s:
+                rows.append(s)
+                seen.add(s["id"])
+    return sorted(rows, key=lambda s: s["name"])
+
+
+def _parse_marks(raw):
+    """-> float marks, or None for blank, or raises ValueError for bad input."""
+    raw = (raw or "").strip()
+    if raw == "":
+        return None
+    try:
+        marks = float(raw)
+    except ValueError:
+        raise ValueError(f"'{raw}' is not a number")
+    if marks < 0 or marks > 100:
+        raise ValueError(f"marks {raw} are outside 0–100")
+    return marks
+
+
+# ---------------------------------------------------------------- grade scale (admin)
+@app.route("/admin/grade-scale", methods=["GET", "POST"])
+@role_required("admin")
+def admin_grade_scale():
+    db = get_db()
+    if request.method == "POST":
+        ids = request.form.getlist("band_id")
+        errors, updates = [], []
+        seen_mins = set()
+        for bid in ids:
+            min_marks = request.form.get(f"min_{bid}", "").strip()
+            grade = request.form.get(f"grade_{bid}", "").strip()
+            gp = request.form.get(f"gp_{bid}", "").strip()
+            try:
+                min_f = float(min_marks)
+                gp_f = float(gp)
+                if not (0 <= min_f <= 100):
+                    raise ValueError
+                if not (0 <= gp_f <= 5):
+                    raise ValueError
+            except ValueError:
+                errors.append(f"Band #{bid}: min marks must be 0–100 and grade point 0–5.")
+                continue
+            if not grade:
+                errors.append(f"Band #{bid}: grade label is required.")
+                continue
+            if min_f in seen_mins:
+                errors.append(f"Two bands cannot share min marks {min_f:g}.")
+                continue
+            seen_mins.add(min_f)
+            updates.append((min_f, grade, gp_f, _int_or_none(bid)))
+        if errors:
+            for e in errors:
+                flash(e, "error")
+        else:
+            for min_f, grade, gp_f, bid in updates:
+                db.execute("UPDATE grade_bands SET min_marks=?, grade=?, grade_point=? WHERE id=?",
+                           (min_f, grade, gp_f, bid))
+            db.commit()
+            flash("Grading scale updated — grades are derived from it everywhere.", "ok")
+            return redirect(url_for("admin_grade_scale"))
+    bands = get_grade_bands(db)
+    for i, b in enumerate(bands):
+        b["max_marks"] = (bands[i - 1]["min_marks"] - 1) if i else 100
+    return render_template("grade_scale.html", bands=bands)
+
+
+@app.route("/admin/grade-scale/add", methods=["POST"])
+@role_required("admin")
+def admin_grade_scale_add():
+    db = get_db()
+    try:
+        min_f = float(request.form.get("min_marks", ""))
+        gp_f = float(request.form.get("grade_point", ""))
+        grade = request.form.get("grade", "").strip()
+        if not grade or not (0 <= min_f <= 100) or not (0 <= gp_f <= 5):
+            raise ValueError
+    except ValueError:
+        flash("New band needs min marks 0–100, a grade label, and grade point 0–5.", "error")
+        return redirect(url_for("admin_grade_scale"))
+    if db.execute("SELECT id FROM grade_bands WHERE min_marks=?", (min_f,)).fetchone():
+        flash(f"A band with min marks {min_f:g} already exists.", "error")
+        return redirect(url_for("admin_grade_scale"))
+    db.insert("INSERT INTO grade_bands (min_marks,grade,grade_point) VALUES (?,?,?)",
+              (min_f, grade, gp_f))
+    db.commit()
+    flash(f"Grade band {grade} (from {min_f:g}) added.", "ok")
+    return redirect(url_for("admin_grade_scale"))
+
+
+@app.route("/admin/grade-scale/<int:band_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_grade_scale_delete(band_id):
+    db = get_db()
+    band = db.execute("SELECT * FROM grade_bands WHERE id=?", (band_id,)).fetchone()
+    if band:
+        db.execute("DELETE FROM grade_bands WHERE id=?", (band_id,))
+        db.commit()
+        flash(f"Grade band '{band['grade']}' deleted.", "ok")
+    return redirect(url_for("admin_grade_scale"))
+
+
+# ---------------------------------------------------------------- results (admin)
+def _result_ctx(db):
+    """Shared selections for the results screens."""
+    course_id = _int_or_none(request.values.get("course_id"))
+    program_id = _int_or_none(request.values.get("program_id"))
+    session_id = _int_or_none(request.values.get("session_id"))
+    semester_no = _int_or_none(request.values.get("semester_no"))
+    course = db.execute("SELECT * FROM courses WHERE id=?", (course_id,)).fetchone() if course_id else None
+    if course:
+        program_id = program_id or course["program_id"]
+        semester_no = semester_no or course["semester_no"]
+    return course, program_id, session_id, semester_no
+
+
+@app.route("/admin/results")
+@role_required("admin")
+def admin_results():
+    db = get_db()
+    course, program_id, session_id, semester_no = _result_ctx(db)
+    sets = db.execute(
+        """SELECT c.id course_id, c.code, c.title, p.name prog_name,
+                  r.semester_no, r.session_id, ss.name sess_name,
+                  COUNT(*) total,
+                  SUM(CASE WHEN COALESCE(r.is_published,0)=1 THEN 1 ELSE 0 END) published
+           FROM results r JOIN courses c ON c.id=r.course_id
+           LEFT JOIN programs p ON p.id=c.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=r.session_id
+           GROUP BY c.id, c.code, c.title, p.name, r.semester_no, r.session_id, ss.name
+           ORDER BY p.name, r.semester_no, c.code""").fetchall()
+    for s in sets:
+        s["published"] = int(s["published"] or 0)
+        s["state"] = ("Published" if s["published"] == s["total"]
+                      else "Unpublished" if s["published"] == 0 else "Partially published")
+    if program_id and semester_no:
+        courses = db.execute(
+            "SELECT * FROM courses WHERE program_id=? AND semester_no=? ORDER BY code",
+            (program_id, semester_no)).fetchall()
+    elif program_id:
+        courses = db.execute(
+            "SELECT * FROM courses WHERE program_id=? ORDER BY semester_no, code",
+            (program_id,)).fetchall()
+    else:
+        courses = db.execute("SELECT * FROM courses ORDER BY code").fetchall()
+    return render_template(
+        "results_home.html", sets=sets, courses=courses,
+        programs=program_options(db), sessions=session_options(db),
+        course=course, program_id=program_id, session_id=session_id,
+        semester_no=semester_no, semesters=list(range(1, 13)))
+
+
+def _sheet_args(db):
+    course, program_id, session_id, semester_no = _result_ctx(db)
+    if not course:
+        return None
+    program_id = course["program_id"]
+    semester_no = course["semester_no"]
+    if not session_id:
+        open_sess = db.execute(
+            "SELECT id FROM academic_sessions WHERE is_open=1 ORDER BY id").fetchone()
+        session_id = open_sess["id"] if open_sess else (
+            session_options(db)[0]["id"] if session_options(db) else None)
+    return course, program_id, session_id, semester_no
+
+
+@app.route("/admin/results/sheet", methods=["GET", "POST"])
+@role_required("admin")
+def admin_results_sheet():
+    db = get_db()
+    ctx = _sheet_args(db)
+    if not ctx:
+        flash("Choose a course to open its marks sheet.", "error")
+        return redirect(url_for("admin_results"))
+    course, program_id, session_id, semester_no = ctx
+    bands = get_grade_bands(db)
+    if request.method == "POST":
+        students = sheet_students(db, program_id, session_id, course["id"], semester_no)
+        ids = [s["id"] for s in students]
+        saved = cleared = 0
+        problems = []
+        for sid in ids:
+            student = next(s for s in students if s["id"] == sid)
+            if request.form.get(f"clear_{sid}"):
+                old = find_result(db, sid, course["id"], semester_no, session_id)
+                if old:
+                    db.execute("DELETE FROM results WHERE id=?", (old["id"],))
+                    cleared += 1
+                continue
+            if request.form.get(f"absent_{sid}"):
+                save_result(db, student, course, session_id, semester_no, None, True, bands)
+                saved += 1
+                continue
+            raw = request.form.get(f"marks_{sid}", "")
+            try:
+                marks = _parse_marks(raw)
+            except ValueError as e:
+                problems.append(f"{student['name']}: {e}")
+                continue
+            if marks is None:
+                continue  # blank = leave unchanged; use the clear box to delete
+            save_result(db, student, course, session_id, semester_no, marks, False, bands)
+            saved += 1
+        db.commit()
+        msg = f"Marks sheet saved — {saved} result(s) saved"
+        if cleared:
+            msg += f", {cleared} cleared"
+        msg += "."
+        flash(msg, "ok")
+        for p in problems:
+            flash(p, "error")
+        return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                                session_id=session_id))
+    students = sheet_students(db, program_id, session_id, course["id"], semester_no)
+    rows = []
+    for s in students:
+        res = find_result(db, s["id"], course["id"], semester_no, session_id)
+        grade, gp = result_grade_gp(res, bands) if res else (None, None)
+        rows.append({"student": s, "result": res, "grade": grade, "gp": gp})
+    published = sum(1 for r in rows if r["result"] and r["result"].get("is_published"))
+    session_row = db.execute("SELECT * FROM academic_sessions WHERE id=?",
+                             (session_id,)).fetchone() if session_id else None
+    program = db.execute("SELECT * FROM programs WHERE id=?", (program_id,)).fetchone()
+    return render_template(
+        "marks_sheet.html", course=course, program=program, session_row=session_row,
+        session_id=session_id, semester_no=semester_no, rows=rows,
+        published=published, total=len(rows))
+
+
+@app.route("/admin/results/sheet/publish", methods=["POST"])
+@role_required("admin")
+def admin_results_publish():
+    db = get_db()
+    ctx = _sheet_args(db)
+    if not ctx:
+        flash("Choose a course first.", "error")
+        return redirect(url_for("admin_results"))
+    course, program_id, session_id, semester_no = ctx
+    publish = 1 if request.form.get("action") == "publish" else 0
+    db.execute(
+        """UPDATE results SET is_published=? WHERE course_id=? AND semester_no=?
+           AND (session_id=? OR session_id IS NULL)""",
+        (publish, course["id"], semester_no, session_id))
+    db.commit()
+    flash(f"Results for {course['code']} are now "
+          f"{'PUBLISHED — students can see them' if publish else 'UNPUBLISHED — hidden from students'}.",
+          "ok")
+    return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                            session_id=session_id))
+
+
+@app.route("/admin/results/sheet.xlsx")
+@role_required("admin")
+def admin_results_sheet_xlsx():
+    db = get_db()
+    ctx = _sheet_args(db)
+    if not ctx:
+        flash("Choose a course first.", "error")
+        return redirect(url_for("admin_results"))
+    course, program_id, session_id, semester_no = ctx
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Marks"
+    ws.append(["Registration No", "Name", "Marks Obtained", "Absent"])
+    for s in sheet_students(db, program_id, session_id, course["id"], semester_no):
+        res = find_result(db, s["id"], course["id"], semester_no, session_id)
+        marks = "" if not res or res.get("marks_obtained") is None else res["marks_obtained"]
+        absent = "Yes" if res and res.get("is_absent") else ""
+        ws.append([s["registration_no"], s["name"], marks, absent])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name=f"marks-{course['code']}-sem{semester_no}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+MARKS_ALIASES = {
+    "registration_no": ["registrationno", "regno", "registration", "rollno"],
+    "marks": ["marksobtained", "marks", "obtainedmarks", "mark", "obtained"],
+    "absent": ["absent", "isabsent", "absence"],
+}
+
+
+@app.route("/admin/results/import", methods=["POST"])
+@role_required("admin")
+def admin_results_import():
+    db = get_db()
+    ctx = _sheet_args(db)
+    if not ctx:
+        flash("Choose a course first.", "error")
+        return redirect(url_for("admin_results"))
+    course, program_id, session_id, semester_no = ctx
+    bands = get_grade_bands(db)
+    f = request.files.get("file")
+    if not f or not f.filename or not f.filename.lower().endswith(".xlsx"):
+        flash("Please choose the marks .xlsx file to import.", "error")
+        return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                                session_id=session_id))
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(f, data_only=True)
+    except Exception as e:
+        flash(f"Could not read that file as an Excel workbook: {e}", "error")
+        return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                                session_id=session_id))
+    rows = list(wb.active.iter_rows(values_only=True))
+    if not rows:
+        flash("The file is empty.", "error")
+        return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                                session_id=session_id))
+    norm_to_idx = {}
+    for idx, cell in enumerate(rows[0]):
+        n = _norm_header(cell)
+        if n:
+            norm_to_idx[n] = idx
+    col = {}
+    for field, aliases in MARKS_ALIASES.items():
+        for a in aliases:
+            if a in norm_to_idx:
+                col[field] = norm_to_idx[a]
+                break
+    if "registration_no" not in col or "marks" not in col:
+        flash("Could not find 'Registration No' and 'Marks Obtained' columns — "
+              "please use the downloaded marks sheet.", "error")
+        return redirect(url_for("admin_results_sheet", course_id=course["id"],
+                                session_id=session_id))
+    imported, skipped = [], []
+    for lineno, raw in enumerate(rows[1:], start=2):
+        if raw is None or all(v is None or str(v).strip() == "" for v in raw):
+            continue
+
+        def val(field):
+            idx = col.get(field)
+            return _cell_str(raw[idx]) if idx is not None and idx < len(raw) else ""
+
+        reg = val("registration_no")
+        student = db.execute("SELECT * FROM students WHERE registration_no=?",
+                             (reg,)).fetchone() if reg else None
+        if not student:
+            skipped.append((lineno, reg or "—", f"unknown registration no '{reg}'"))
+            continue
+        absent_txt = val("absent").strip().lower()
+        is_absent = absent_txt in ("yes", "y", "1", "true", "absent", "a", "x")
+        marks_txt = val("marks")
+        if marks_txt.strip().lower() == "absent":
+            is_absent, marks_txt = True, ""
+        if is_absent:
+            save_result(db, student, course, session_id, semester_no, None, True, bands)
+            imported.append(reg)
+            continue
+        try:
+            marks = _parse_marks(marks_txt)
+        except ValueError as e:
+            skipped.append((lineno, reg, str(e)))
+            continue
+        if marks is None:
+            skipped.append((lineno, reg, "no marks given and not marked absent"))
+            continue
+        save_result(db, student, course, session_id, semester_no, marks, False, bands)
+        imported.append(reg)
+    db.commit()
+    return render_template("results_import_result.html", imported=imported,
+                           skipped=skipped, course=course, session_id=session_id)
+
+
+# ---------------------------------------------------------------- transcript PDF
+def student_full(db, student_id):
+    return db.execute(
+        """SELECT s.*, d.name dept_name, p.name prog_name, ss.name sess_name
+           FROM students s LEFT JOIN departments d ON d.id=s.department_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=s.session_id
+           WHERE s.id=?""", (student_id,)).fetchone()
+
+
+def _pdf_header(styles, title_text):
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.units import mm
+    return [Paragraph("MY CUVAS — Campus Management System", styles["Title"]),
+            Paragraph("Cholistan University of Veterinary and Animal Sciences",
+                      styles["Heading3"]),
+            Paragraph(title_text, styles["Heading2"]), Spacer(1, 4 * mm)]
+
+
+def build_transcript_pdf(db, student_id):
+    """Official-style transcript PDF bytes, driven by transcript_data()
+    (published results only) — the same numbers as the student's web tab."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    student = student_full(db, student_id)
+    transcript, cgpa, _ch = transcript_data(db, student_id, published_only=True)
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            title=f"Transcript {student['registration_no']}")
+    story = _pdf_header(styles, "OFFICIAL TRANSCRIPT (Demo)")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
+    light = colors.HexColor("#eaf5ee")
+    info = [["Student Name", student["name"], "Registration No.", student["registration_no"]],
+            ["Program", student["prog_name"] or "—", "Department", student["dept_name"] or "—"],
+            ["Session", student["sess_name"] or student.get("session_name") or "—",
+             "Current Semester", str(student.get("current_semester") or "—")]]
+    t = Table(info, colWidths=[30 * mm, 58 * mm, 30 * mm, 64 * mm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                           ("BACKGROUND", (0, 0), (0, -1), light),
+                           ("BACKGROUND", (2, 0), (2, -1), light),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [t, Spacer(1, 5 * mm)]
+    if not transcript:
+        story.append(Paragraph("No published results yet.", styles["BodyText"]))
+    for sem in sorted(transcript):
+        block = transcript[sem]
+        story.append(Paragraph(f"Semester {sem} — SGPA: {block['sgpa']:.2f}",
+                               styles["Heading3"]))
+        rows = [["Code", "Course Title", "Cr. Hrs", "Marks", "Grade", "Grade Points", "Quality Points"]]
+        for r in block["rows"]:
+            rows.append([r["code"], r["title"], str(r["credits"]), r["marks_display"],
+                         r["grade"] or "—",
+                         f"{r['grade_point']:.2f}" if r["grade_point"] is not None else "—",
+                         f"{r['quality_points']:.2f}"])
+        rows.append(["", f"Semester SGPA", "", "", "", "", f"{block['sgpa']:.2f}"])
+        lt = Table(rows, colWidths=[16 * mm, 74 * mm, 14 * mm, 16 * mm, 14 * mm, 22 * mm, 26 * mm])
+        lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                                ("BACKGROUND", (0, 0), (-1, 0), green),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("BACKGROUND", (0, -1), (-1, -1), light),
+                                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                ("ALIGN", (2, 0), (-1, -1), "CENTER")]))
+        story += [lt, Spacer(1, 4 * mm)]
+    story += [Spacer(1, 2 * mm),
+              Paragraph(f"<b>Cumulative GPA (CGPA): {cgpa:.2f}</b>", styles["Heading3"]),
+              Spacer(1, 6 * mm),
+              Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — system-generated, "
+                        f"all data shown is fictional demo data.", styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/transcript.pdf")
+@role_required("student")
+def student_transcript_pdf():
+    db = get_db()
+    sid = session.get("student_id")
+    if not sid:
+        abort(404)
+    student = student_full(db, sid)
+    return send_file(io.BytesIO(build_transcript_pdf(db, sid)), as_attachment=True,
+                     download_name=f"transcript-{student['registration_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/admin/students/<int:student_id>/transcript.pdf")
+@role_required("admin")
+def admin_student_transcript_pdf(student_id):
+    db = get_db()
+    student = student_full(db, student_id)
+    if not student:
+        abort(404)
+    return send_file(io.BytesIO(build_transcript_pdf(db, student_id)), as_attachment=True,
+                     download_name=f"transcript-{student['registration_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+# ---------------------------------------------------------------- roll number slips
+def slip_courses(db, student, semester_no):
+    """Courses for a student's slip: enrolments first, then their result
+    courses, then the program's plan of study for that semester."""
+    rows = db.execute(
+        """SELECT c.* FROM enrollments e JOIN courses c ON c.id=e.course_id
+           WHERE e.student_id=? AND e.semester_no=? ORDER BY c.code""",
+        (student["id"], semester_no)).fetchall()
+    if not rows:
+        rows = db.execute(
+            """SELECT DISTINCT c.* FROM results r JOIN courses c ON c.id=r.course_id
+               WHERE r.student_id=? AND r.semester_no=? ORDER BY c.code""",
+            (student["id"], semester_no)).fetchall()
+    if not rows and student.get("program_id"):
+        rows = db.execute(
+            "SELECT * FROM courses WHERE program_id=? AND semester_no=? ORDER BY code",
+            (student["program_id"], semester_no)).fetchall()
+    return rows
+
+
+def build_slips_pdf(db, student_semesters):
+    """Roll number slips — one page per (student, semester_no)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate,
+                                    Spacer, Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            title="Roll Number Slips")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
+    story = []
+    for i, (student, semester_no) in enumerate(student_semesters):
+        if i:
+            story.append(PageBreak())
+        story += _pdf_header(styles, "ROLL NUMBER SLIP — Semester Examination")
+        photo = Table([[Paragraph("<br/><br/>STUDENT<br/>PHOTO", styles["BodyText"])]],
+                      colWidths=[30 * mm], rowHeights=[36 * mm])
+        photo.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, green),
+                                   ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                                   ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        info = [["Student Name", student["name"]],
+                ["Registration / Roll No.", student["registration_no"]],
+                ["Program", student["prog_name"] or "—"],
+                ["Department", student["dept_name"] or "—"],
+                ["Session", student["sess_name"] or student.get("session_name") or "—"],
+                ["Semester", str(semester_no)]]
+        it = Table(info, colWidths=[42 * mm, 100 * mm])
+        it.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eaf5ee")),
+                                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        combo = Table([[photo, it]], colWidths=[36 * mm, 146 * mm])
+        combo.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                   ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                   ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+        story += [combo, Spacer(1, 5 * mm)]
+        courses = slip_courses(db, student, semester_no)
+        rows = [["#", "Course Code", "Course Title", "Credit Hours"]]
+        for j, c in enumerate(courses, 1):
+            rows.append([str(j), c["code"], c["title"],
+                         f"{(c['credit_theory'] or 0)}-{(c['credit_lab'] or 0)}"])
+        if not courses:
+            rows.append(["", "—", "No courses found for this semester", ""])
+        ct = Table(rows, colWidths=[10 * mm, 28 * mm, 104 * mm, 40 * mm])
+        ct.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                                ("BACKGROUND", (0, 0), (-1, 0), green),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+        story += [ct, Spacer(1, 6 * mm),
+                  Paragraph("<b>Instructions:</b>", styles["BodyText"]),
+                  Paragraph("1. Bring this roll number slip and your student card to every paper.",
+                            styles["BodyText"]),
+                  Paragraph("2. Reach the examination hall at least 30 minutes before the paper starts.",
+                            styles["BodyText"]),
+                  Paragraph("3. Mobile phones, smart watches and other electronic devices are not "
+                            "allowed inside the examination hall.", styles["BodyText"]),
+                  Paragraph("4. Write your roll number on the answer book exactly as shown on this slip.",
+                            styles["BodyText"]),
+                  Spacer(1, 6 * mm),
+                  Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — system-generated slip, "
+                            f"all data shown is fictional demo data.", styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson
+    return buf.getvalue()
+
+
+def _slip_semester_arg(student):
+    return _int_or_none(request.args.get("semester_no")) or student.get("current_semester") or 1
+
+
+@app.route("/student/slip.pdf")
+@role_required("student")
+def student_slip_pdf():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        abort(404)
+    sem = _slip_semester_arg(student)
+    return send_file(io.BytesIO(build_slips_pdf(db, [(student, sem)])), as_attachment=True,
+                     download_name=f"roll-slip-{student['registration_no']}-sem{sem}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/admin/students/<int:student_id>/slip.pdf")
+@role_required("admin")
+def admin_student_slip_pdf(student_id):
+    db = get_db()
+    student = student_full(db, student_id)
+    if not student:
+        abort(404)
+    sem = _slip_semester_arg(student)
+    return send_file(io.BytesIO(build_slips_pdf(db, [(student, sem)])), as_attachment=True,
+                     download_name=f"roll-slip-{student['registration_no']}-sem{sem}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/admin/slips.pdf")
+@role_required("admin")
+def admin_slips_bulk_pdf():
+    db = get_db()
+    program_id = _int_or_none(request.args.get("program_id"))
+    session_id = _int_or_none(request.args.get("session_id"))
+    semester_no = _int_or_none(request.args.get("semester_no")) or 1
+    if not program_id or not session_id:
+        flash("Choose a program and session to generate bulk roll number slips.", "error")
+        return redirect(url_for("admin_results"))
+    students = db.execute(
+        """SELECT s.*, d.name dept_name, p.name prog_name, ss.name sess_name
+           FROM students s LEFT JOIN departments d ON d.id=s.department_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=s.session_id
+           WHERE s.program_id=? AND s.session_id=? AND COALESCE(s.status,'Active')='Active'
+           ORDER BY s.name""", (program_id, session_id)).fetchall()
+    if not students:
+        flash("No active students found for that program + session.", "error")
+        return redirect(url_for("admin_results"))
+    return send_file(io.BytesIO(build_slips_pdf(db, [(s, semester_no) for s in students])),
+                     as_attachment=True,
+                     download_name=f"roll-slips-sem{semester_no}.pdf",
+                     mimetype="application/pdf")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,42 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Results &amp; Examinations</h2>
+<div><a class="btn ghost" href="{{ url_for('admin_grade_scale') }}">⚖ Grading Scale</a></div></div>
+
+<div class="form-card" style="margin-bottom:18px"><h3 style="margin-top:0">Enter / Edit Marks</h3>
+<form method="get">
+<label>Session *</label><select name="session_id" required>
+<option value="">— Select session —</option>
+{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if session_id==s.id else '' }}>{{ s.name }}{{ ' (open)' if s.is_open else '' }}</option>{% endfor %}</select>
+<label>Program</label><select name="program_id">
+<option value="">— Any program —</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if program_id==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select>
+<label>Semester</label><select name="semester_no">
+<option value="">— Any —</option>
+{% for n in semesters %}<option value="{{ n }}" {{ 'selected' if semester_no==n else '' }}>Semester {{ n }}</option>{% endfor %}</select>
+<div class="form-actions"><button class="btn ghost" type="submit">Load Courses</button></div>
+<label>Course *</label><select name="course_id" required>
+<option value="">— Select course —</option>
+{% for c in courses %}<option value="{{ c.id }}" {{ 'selected' if course and course.id==c.id else '' }}>{{ c.code }} — {{ c.title }} (Sem {{ c.semester_no }})</option>{% endfor %}</select>
+<div class="form-actions"><button class="btn green" type="submit" formaction="{{ url_for('admin_results_sheet') }}">Open Marks Sheet →</button></div>
+</form>
+<p class="muted">Tip: pick a program + semester, press <em>Load Courses</em>, then choose the course and open its sheet.</p></div>
+
+<h3>Result Sets</h3>
+<table><tr><th>Course</th><th>Program</th><th>Session</th><th>Sem</th><th>Results</th><th>Published</th><th>State</th><th>Actions</th></tr>
+{% for s in sets %}<tr><td>{{ s.code }} — {{ s.title }}</td><td>{{ s.prog_name or '—' }}</td><td>{{ s.sess_name or '— (legacy)' }}</td><td>{{ s.semester_no }}</td><td>{{ s.total }}</td><td>{{ s.published }}</td>
+<td><span class="pill {{ 'paid' if s.state=='Published' else 'pending' }}">{{ s.state }}</span></td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_results_sheet', course_id=s.course_id, session_id=s.session_id) }}">Open Sheet</a></td></tr>
+{% else %}<tr><td colspan="8">No results entered yet.</td></tr>{% endfor %}</table>
+
+<div class="form-card" style="margin-top:18px"><h3 style="margin-top:0">Bulk Roll Number Slips (PDF)</h3>
+<form method="get" action="{{ url_for('admin_slips_bulk_pdf') }}">
+<label>Program *</label><select name="program_id" required>
+<option value="">— Select program —</option>
+{% for p in programs %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select>
+<label>Session *</label><select name="session_id" required>
+<option value="">— Select session —</option>
+{% for s in sessions %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+<label>Semester *</label><input name="semester_no" type="number" min="1" max="12" value="1" required style="width:120px">
+<div class="form-actions"><button class="btn green" type="submit">⬇ Generate Slips PDF (one page per student)</button></div>
+</form></div>
+{% endblock %}
