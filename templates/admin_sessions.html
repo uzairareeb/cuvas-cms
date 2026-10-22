@@ -1,0 +1,9 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Academic Sessions</h2><a class="btn green" href="{{ url_for('admin_session_new') }}">+ Add Session</a></div>
+<table><tr><th>Session</th><th>Starts</th><th>Ends</th><th>Status</th><th>Students</th><th>Actions</th></tr>
+{% for s in rows %}<tr><td>{{ s.name }}</td><td>{{ s.starts_on or '—' }}</td><td>{{ s.ends_on or '—' }}</td>
+<td>{% if s.is_open %}<span class="pill paid">Open</span>{% else %}<span class="pill pending">Closed</span>{% endif %}</td><td>{{ s.stu_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_session_edit', sess_id=s.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_session_delete', sess_id=s.id) }}" onsubmit="return confirm('Delete session {{ s.name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="6">No sessions yet.</td></tr>{% endfor %}</table>
+{% endblock %}

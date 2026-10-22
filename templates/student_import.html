@@ -1,0 +1,15 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Import Students from Excel</h2>
+<div class="card">
+<p>Upload an <strong>.xlsx</strong> file with one student per row. Column headers are matched
+<strong>by name</strong> (order and spacing do not matter) — use the template to be safe.
+Department, Program and Session are matched by their exact names. Each imported student
+automatically gets a login (username = Registration No); the initial passwords are shown
+<strong>once</strong> on the result page. Bad rows are skipped and reported — the rest of the file still imports.</p>
+<p><a class="btn ghost" href="{{ url_for('admin_students_template') }}">⬇ Download Import Template (.xlsx)</a></p>
+<form method="post" enctype="multipart/form-data">
+<label>Excel file (.xlsx)</label><input type="file" name="file" accept=".xlsx" required>
+<div class="form-actions"><button class="btn green" type="submit">Import</button>
+<a class="btn ghost" href="{{ url_for('admin_students') }}">Back to Students</a></div></form>
+</div>
+{% endblock %}

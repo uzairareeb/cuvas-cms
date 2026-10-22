@@ -1,5 +1,8 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<h2>Programs</h2>
-<table><tr><th>Program</th><th>Department</th><th>Level</th><th>Duration (Semesters)</th></tr>
-{% for p in rows %}<tr><td>{{ p.name }}</td><td>{{ p.dept }}</td><td>{{ p.degree_level }}</td><td>{{ p.duration_semesters }}</td></tr>{% endfor %}</table>
+{% block admin_body %}<div class="toolbar"><h2>Programs</h2><a class="btn green" href="{{ url_for('admin_program_new') }}">+ Add Program</a></div>
+<table><tr><th>Program</th><th>Department</th><th>Level</th><th>Duration (Semesters)</th><th>Students</th><th>Courses</th><th>Actions</th></tr>
+{% for p in rows %}<tr><td>{{ p.name }}</td><td>{{ p.dept or '—' }}</td><td>{{ p.degree_level or '—' }}</td><td>{{ p.duration_semesters or '—' }}</td><td>{{ p.stu_count }}</td><td>{{ p.course_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_program_edit', prog_id=p.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_program_delete', prog_id=p.id) }}" onsubmit="return confirm('Delete program {{ p.name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No programs yet.</td></tr>{% endfor %}</table>
 {% endblock %}

@@ -23,12 +23,15 @@
 <h3>Personal &amp; Academic Profile</h3>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
-<tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>Gender</th><td>{{ student.gender }}</td></tr>
-<tr><th>Date of Birth</th><td>{{ student.dob }}</td><th>Phone</th><td>{{ student.phone }}</td></tr>
-<tr><th>Email</th><td>{{ student.email }}</td><th>Campus</th><td>{{ student.campus }}</td></tr>
+<tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>
+<tr><th>Gender</th><td>{{ student.gender or '—' }}</td><th>Date of Birth</th><td>{{ student.dob or '—' }}</td></tr>
+<tr><th>Domicile</th><td>{{ student.domicile or '—' }}</td><th>Blood Group</th><td>{{ student.blood_group or '—' }}</td></tr>
+<tr><th>Phone</th><td>{{ student.phone or '—' }}</td><th>Email</th><td>{{ student.email or '—' }}</td></tr>
+<tr><th>Campus</th><td>{{ student.campus or '—' }}</td><th>Status</th><td>{{ student.status or '—' }}</td></tr>
 <tr><th>Department</th><td>{{ student.dept }}</td><th>Program</th><td>{{ student.prog }}</td></tr>
-<tr><th>Session</th><td>{{ student.session_name }}</td><th>Status</th><td>{{ student.status }}</td></tr>
-<tr><th>Address</th><td colspan="3">{{ student.address }}</td></tr>
+<tr><th>Session</th><td colspan="3">{{ student.session_name }}</td></tr>
+<tr><th>Present Address</th><td colspan="3">{{ student.address_present or student.address or '—' }}</td></tr>
+<tr><th>Permanent Address</th><td colspan="3">{{ student.address_permanent or '—' }}</td></tr>
 </table>
 <h4>Previous Qualifications / Certificates</h4>
 <table><tr><th>Title</th><th>Board / University</th><th>Passing Year</th><th>Total Marks</th><th>Obtained Marks</th></tr>

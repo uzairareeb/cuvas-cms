@@ -24,7 +24,26 @@ table{width:100%;border-collapse:collapse;background:#fff}th{background:#eaf5ee;
 .login-box{max-width:420px;margin:50px auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.09);border-top:6px solid var(--green)}
 input{width:100%;padding:11px;border:1px solid #c9dcd1;border-radius:9px;margin:6px 0 14px}
 label{font-weight:600;font-size:14px}
-.flash{background:#fdecea;color:var(--red);padding:10px 14px;border-radius:9px;margin-bottom:14px;font-weight:600}
+.flash{background:#eef4f1;color:var(--ink);padding:10px 14px;border-radius:9px;margin-bottom:14px;font-weight:600}
+.flash.error{background:#fdecea;color:var(--red)}
+.flash.ok{background:#dff5e6;color:var(--green)}
+.btn.small{padding:6px 13px;font-size:13px;border-radius:20px}
+.btn.danger{background:var(--red);color:#fff!important}
+.toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.toolbar h2{margin:0}
+td.actions{white-space:nowrap}
+td.actions form{display:inline-block;margin-left:6px}
+.form-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px;max-width:560px;box-shadow:0 2px 8px rgba(11,107,58,.06)}
+.form-card.wide{max-width:900px}
+.form-card select,.form-card textarea{width:100%;padding:11px;border:1px solid #c9dcd1;border-radius:9px;margin:6px 0 14px;font-family:inherit;font-size:14px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+.form-actions{margin-top:6px;display:flex;gap:10px}
+label.check{display:flex;align-items:center;gap:8px;margin:6px 0 14px}
+label.check input{width:auto;margin:0}
+.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+.filter-bar input,.filter-bar select{width:auto;margin:0;padding:9px;border:1px solid #c9dcd1;border-radius:9px}
+.pagination{display:flex;gap:14px;align-items:center;margin-top:16px}
+code{background:#eaf5ee;padding:2px 7px;border-radius:6px;font-weight:700}
 .demo-note{background:#fff8d6;border:1px dashed var(--gold);padding:10px 14px;border-radius:9px;font-size:14px;margin-top:14px}
 footer{text-align:center;color:var(--muted);padding:20px;font-size:13px}
 h2{margin-top:0}.muted{color:var(--muted)}

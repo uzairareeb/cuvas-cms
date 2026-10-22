@@ -1,0 +1,14 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Program' if prog else 'Add Program' }}</h2>
+<form method="post" class="form-card">
+<label>Program Name *</label><input name="name" required value="{{ prog.name if prog else '' }}">
+<label>Department *</label><select name="department_id" required>
+<option value="">— Select department —</option>
+{% for d in departments %}<option value="{{ d.id }}" {{ 'selected' if prog and prog.department_id==d.id else '' }}>{{ d.name }}</option>{% endfor %}</select>
+<label>Degree Level</label><select name="degree_level">
+<option value="">— Select level —</option>
+{% for lv in levels %}<option value="{{ lv }}" {{ 'selected' if prog and prog.degree_level==lv else '' }}>{{ lv }}</option>{% endfor %}</select>
+<label>Duration (Semesters)</label><input name="duration_semesters" type="number" min="1" max="20" value="{{ prog.duration_semesters if prog else '' }}">
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if prog else 'Add Program' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_programs') }}">Cancel</a></div></form>
+{% endblock %}

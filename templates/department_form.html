@@ -1,0 +1,9 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Department' if dept else 'Add Department' }}</h2>
+<form method="post" class="form-card">
+<label>Department Name *</label><input name="name" required value="{{ dept.name if dept else '' }}">
+<label>Code *</label><input name="code" required value="{{ dept.code if dept else '' }}">
+<label>Faculty</label><input name="faculty_name" value="{{ dept.faculty_name if dept else '' }}">
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if dept else 'Add Department' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_departments') }}">Cancel</a></div></form>
+{% endblock %}

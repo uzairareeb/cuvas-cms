@@ -1,0 +1,10 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Session' if sess else 'Add Session' }}</h2>
+<form method="post" class="form-card">
+<label>Session Name * (e.g. Fall-2026)</label><input name="name" required value="{{ sess.name if sess else '' }}">
+<label>Start Date</label><input name="starts_on" type="date" value="{{ sess.starts_on if sess else '' }}">
+<label>End Date</label><input name="ends_on" type="date" value="{{ sess.ends_on if sess else '' }}">
+<label class="check"><input type="checkbox" name="is_open" {{ 'checked' if sess and sess.is_open else '' }}> Open (admissions / enrollment running)</label>
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if sess else 'Add Session' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_sessions') }}">Cancel</a></div></form>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Courses</h2><a class="btn green" href="{{ url_for('admin_course_new') }}">+ Add Course</a></div>
+<form method="get" class="filter-bar"><label>Program</label>
+<select name="program_id" onchange="this.form.submit()"><option value="">All programs</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if program_filter==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select></form>
+<table><tr><th>Code</th><th>Course</th><th>Program</th><th>Semester</th><th>Credits (Th-Lab)</th><th>Faculty</th><th>Actions</th></tr>
+{% for c in rows %}<tr><td>{{ c.code }}</td><td>{{ c.title }}</td><td>{{ c.prog or '—' }}</td><td>{{ c.semester_no }}</td><td>{{ c.credit_theory }}-{{ c.credit_lab }}</td><td>{{ c.faculty_name or '—' }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_course_edit', course_id=c.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_course_delete', course_id=c.id) }}" onsubmit="return confirm('Delete course {{ c.code }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No courses yet.</td></tr>{% endfor %}</table>
+{% endblock %}

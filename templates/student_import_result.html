@@ -1,0 +1,15 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Import Result</h2>
+<div class="grid">
+<div class="card kpi"><div class="num">{{ imported|length }}</div><div class="lbl">Imported</div></div>
+<div class="card kpi red"><div class="num">{{ skipped|length }}</div><div class="lbl">Skipped</div></div>
+</div>
+{% if created_logins %}<h3 style="margin-top:24px">Student Logins Created — passwords shown ONCE, note them now</h3>
+<table><tr><th>Registration No</th><th>Name</th><th>Initial Password</th></tr>
+{% for l in created_logins %}<tr><td>{{ l.registration_no }}</td><td>{{ l.name }}</td><td><code>{{ l.password }}</code></td></tr>{% endfor %}</table>{% endif %}
+{% if skipped %}<h3 style="margin-top:24px">Skipped Rows</h3>
+<table><tr><th>Excel Row</th><th>Student</th><th>Reason</th></tr>
+{% for lineno, label, reason in skipped %}<tr><td>{{ lineno }}</td><td>{{ label }}</td><td>{{ reason }}</td></tr>{% endfor %}</table>{% endif %}
+<p style="margin-top:20px"><a class="btn green" href="{{ url_for('admin_students') }}">Go to Students</a>
+<a class="btn ghost" href="{{ url_for('admin_students_import') }}">Import Another File</a></p>
+{% endblock %}

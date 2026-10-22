@@ -1,0 +1,36 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Student' if student else 'Add Student' }}</h2>
+{% set s = student %}
+<form method="post" class="form-card wide">
+<div class="form-grid">
+<div><label>Registration No *</label><input name="registration_no" required value="{{ s.registration_no if s else '' }}" {{ 'readonly' if s else '' }}>
+{% if s %}<p class="muted">Registration No is the student's login username and cannot be changed.</p>{% endif %}</div>
+<div><label>CNIC</label><input name="cnic" value="{{ s.cnic if s and s.cnic else '' }}" placeholder="35202-0000000-0"></div>
+<div><label>Full Name *</label><input name="name" required value="{{ s.name if s else '' }}"></div>
+<div><label>Father Name</label><input name="father_name" value="{{ s.father_name if s and s.father_name else '' }}"></div>
+<div><label>Gender</label><select name="gender"><option value="">—</option>
+{% for g in genders %}<option value="{{ g }}" {{ 'selected' if s and s.gender==g else '' }}>{{ g }}</option>{% endfor %}</select></div>
+<div><label>Date of Birth</label><input name="dob" type="date" value="{{ s.dob if s and s.dob else '' }}"></div>
+<div><label>Domicile</label><input name="domicile" value="{{ s.domicile if s and s.domicile else '' }}"></div>
+<div><label>Blood Group</label><select name="blood_group"><option value="">—</option>
+{% for b in blood_groups %}<option value="{{ b }}" {{ 'selected' if s and s.blood_group==b else '' }}>{{ b }}</option>{% endfor %}</select></div>
+<div><label>Phone</label><input name="phone" value="{{ s.phone if s and s.phone else '' }}"></div>
+<div><label>Email</label><input name="email" type="email" value="{{ s.email if s and s.email else '' }}"></div>
+<div><label>Department</label><select name="department_id"><option value="">—</option>
+{% for d in departments %}<option value="{{ d.id }}" {{ 'selected' if s and s.department_id==d.id else '' }}>{{ d.name }}</option>{% endfor %}</select></div>
+<div><label>Program</label><select name="program_id"><option value="">—</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if s and s.program_id==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select></div>
+<div><label>Session</label><select name="session_id"><option value="">—</option>
+{% for ss in sessions %}<option value="{{ ss.id }}" {{ 'selected' if s and s.session_id==ss.id else '' }}>{{ ss.name }}</option>{% endfor %}</select></div>
+<div><label>Campus</label><input name="campus" value="{{ s.campus if s and s.campus else '' }}"></div>
+<div><label>Status</label><select name="status">
+{% for st in statuses %}<option value="{{ st }}" {{ 'selected' if (s and s.status==st) or (not s and st=='Active') else '' }}>{{ st }}</option>{% endfor %}</select></div>
+<div><label>Current Semester</label><input name="current_semester" type="number" min="1" max="20" value="{{ s.current_semester if s and s.current_semester else '' }}"></div>
+</div>
+<label>Present Address</label><textarea name="address_present" rows="2">{{ s.address_present if s and s.address_present else '' }}</textarea>
+<label>Permanent Address</label><textarea name="address_permanent" rows="2">{{ s.address_permanent if s and s.address_permanent else '' }}</textarea>
+{% if not s %}<label>Initial Password (optional — leave blank to auto-generate; it is shown once after saving)</label>
+<input name="initial_password" autocomplete="new-password">{% endif %}
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if s else 'Add Student' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_students') }}">Cancel</a></div></form>
+{% endblock %}

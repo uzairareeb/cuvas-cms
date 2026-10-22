@@ -1,0 +1,15 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Course' if course else 'Add Course' }}</h2>
+<form method="post" class="form-card">
+<label>Program *</label><select name="program_id" required>
+<option value="">— Select program —</option>
+{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if course and course.program_id==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select>
+<label>Semester No *</label><input name="semester_no" type="number" min="1" max="20" required value="{{ course.semester_no if course else '' }}">
+<label>Course Code *</label><input name="code" required value="{{ course.code if course else '' }}">
+<label>Course Title *</label><input name="title" required value="{{ course.title if course else '' }}">
+<label>Credit Hours — Theory</label><input name="credit_theory" type="number" min="0" max="10" value="{{ course.credit_theory if course else 3 }}">
+<label>Credit Hours — Lab</label><input name="credit_lab" type="number" min="0" max="10" value="{{ course.credit_lab if course else 0 }}">
+<label>Faculty</label><input name="faculty_name" value="{{ course.faculty_name if course else '' }}">
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if course else 'Add Course' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_courses') }}">Cancel</a></div></form>
+{% endblock %}

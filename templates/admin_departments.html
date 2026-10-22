@@ -1,5 +1,8 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<h2>Departments</h2>
-<table><tr><th>Code</th><th>Department</th><th>Faculty</th><th>Programs</th><th>Students</th></tr>
-{% for d in rows %}<tr><td>{{ d.code }}</td><td>{{ d.name }}</td><td>{{ d.faculty_name }}</td><td>{{ d.prog_count }}</td><td>{{ d.stu_count }}</td></tr>{% endfor %}</table>
+{% block admin_body %}<div class="toolbar"><h2>Departments</h2><a class="btn green" href="{{ url_for('admin_department_new') }}">+ Add Department</a></div>
+<table><tr><th>Code</th><th>Department</th><th>Faculty</th><th>Programs</th><th>Students</th><th>Actions</th></tr>
+{% for d in rows %}<tr><td>{{ d.code }}</td><td>{{ d.name }}</td><td>{{ d.faculty_name or '—' }}</td><td>{{ d.prog_count }}</td><td>{{ d.stu_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_department_edit', dept_id=d.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_department_delete', dept_id=d.id) }}" onsubmit="return confirm('Delete department {{ d.name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="6">No departments yet.</td></tr>{% endfor %}</table>
 {% endblock %}
