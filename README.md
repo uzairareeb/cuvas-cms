@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.10
+# MY CUVAS — Campus Management System (Demo) v0.11
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -19,7 +19,11 @@ auto-evaluated Accounts check and a certificate PDF — see the v0.9
 section below. **Step 14 (v0.10)** adds scholarships — admin-managed
 schemes, a per-student socio-economic profile that gates applying,
 and an admin review flow with recorded awards — see the v0.10 section
-below.
+below. **Step 15 (v0.11)** adds course repeat / improvement — apply
+from published results, an admin-set per-credit-hour fee, approval by
+issuing a normal fee voucher, enrolment on verified payment, and a
+transcript that counts only the latest attempt of a repeated course —
+see the v0.11 section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -112,6 +116,15 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   filters, name / reg-no search); `/admin/scholarships/applications/<id>`
   is the review page (full profile, transcript CGPA, ledger dues,
   Under Review / Approve / Reject decision)
+- `/student/repeat` — course repeat / improvement: eligible courses
+  from the student's published results (F → Repeat, pass →
+  Improvement) with an apply form (target session + optional reason),
+  and the student's own requests with status, remarks and the linked
+  fee voucher; linked by a **Course Repeat / Improvement** button in
+  the Transcript tab — see the Course Repeat section below
+- `/admin/repeat` — the repeat desk: the per-credit-hour rate setting
+  plus all requests (status filter, name / reg-no search) with
+  Approve (issues the fee voucher) / Reject (remarks required)
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -410,6 +423,75 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   “My Applications” section; one student's profile and applications
   are never visible to another student.
 
+## Course Repeat & Improvement (Step 15, v0.11)
+
+- **Model** (two new tables, plain INTEGER ids like
+  `enrollments`/`results`): `repeat_requests` (student, course,
+  from-session, target session, kind Repeat / Improvement, optional
+  student reason, status Requested / Approved / Enrolled / Rejected /
+  Cancelled, admin remarks, linked `voucher_id`, decided_by /
+  decided_at) and `app_settings` — a tiny key-value store (the app
+  had none before) holding `repeat_fee_per_ch`, seeded to **2000**
+  by `backfill_v11` only while the key is absent, so an admin-changed
+  rate survives reboots. `vouchers` gains one additive column,
+  `repeat_request_id` (via `ensure_columns`); repeat vouchers use the
+  existing `kind` column with the new value `'Repeat'`.
+- **Eligibility** (`repeat_eligibility`) is computed from **published
+  results only** — unpublished results never appear. The **latest**
+  published attempt per course decides: grade **F → Repeat**, any
+  passed grade → **Improvement**. A course is not eligible while the
+  student has an **active** request for it (`active_repeat_request`:
+  Requested / Approved always block; Enrolled blocks until the repeat
+  attempt is published in its target session), and applying is
+  refused server-side when the target session equals the original
+  attempt's session or the student is already enrolled in that course
+  for the target session. The student page (`/student/repeat`, linked
+  by a Course Repeat / Improvement button in the Transcript tab — the
+  dashboard's 10 tabs and labels are unchanged) lists the eligible
+  courses with an apply form and the student's own requests; a
+  request can be **cancelled only while Requested** (an approved
+  request already has a voucher issued against it).
+- **Approval = a normal fee voucher** (`create_repeat_voucher`):
+  title “Course Repeat — `<code>`” (or “Course Improvement —
+  `<code>`”), amount = the **current** rate × the course's credit
+  hours (theory + lab), a sequential `CUVAS-<year>-<seq>` challan
+  number, due date today + 14 days, and the usual **debit ledger
+  entry** at creation — so the voucher appears in the student's
+  Financial Voucher tab, Account Statement and challan PDF exactly
+  like a fee-plan voucher. **Reject** requires remarks (shown to the
+  student); approving or rejecting is possible only from Requested,
+  so a decided request cannot be re-decided, and a rate change
+  affects only vouchers issued afterwards (issued vouchers keep
+  their amount).
+- **Activation on payment**: the hook sits in the existing admin
+  voucher-verification success point, after the ledger credit and
+  inside its commit: when the verified voucher carries a
+  `repeat_request_id`, `activate_repeat_request` flips the request
+  from Approved to **Enrolled** and creates the enrollment
+  (student, course, **target session name**, course semester) if
+  missing. It is idempotent (a no-op unless the request is still
+  Approved), and a **rejected proof activates nothing** — the request
+  stays Approved and the student can upload a fresh proof as usual.
+- **Cohort inclusion**: `sheet_students` additionally UNIONs students
+  with an explicit enrollment for the course in the sheet's session
+  (enrollments store the session **name**), so an activated repeat
+  student appears in the admin marks sheet and the faculty roster for
+  the target session even though their admission session differs; no
+  existing cohort outcome changes (the union only adds students who
+  hold such an enrollment and were not already listed).
+- **Transcript rule (the one deliberate change to an old feature)**:
+  in `transcript_data` — the single helper behind the web tab and
+  the PDF — when a student has published results for the same course
+  in multiple sessions, **only the latest attempt counts** in
+  SGPA/CGPA (latest = greatest session id, the app's chronological
+  session ordering, tie-broken by the greatest result id). Earlier
+  attempts still render in their semester group, flagged with a
+  **“Repeated”** tag on the web tab and a “(Repeated)” note in the
+  PDF (plus a footnote), with their grade points excluded. Students
+  with no repeated course get byte-identical numbers — the demo
+  transcript stays at **CGPA 3.63** and `verify_v04.py` passes
+  untouched.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -526,8 +608,41 @@ checks). Migration note: v0.10 adds three new tables via the boot DDL
 plus the guarded `backfill_v10` scheme seed, so a v0.9 database boots
 into v0.10 with its data untouched and a second boot is a no-op.
 
-## Not in v0.10
+`verify_v11.py` adds a 64-check pass over Step 15 (eligibility from
+published results only — F → Repeat, pass → Improvement, unpublished
+invisible; target == original session refused; duplicate active
+request refused; cancel only while Requested, and only by the owner;
+the already-enrolled-in-target refusal; reject needs remarks and a
+decided request cannot be re-decided; the admin rate change prices
+the next approval at 2500 × 3 CH = Rs 7,500 and, once restored to
+2000, later approvals at 2000 × credits — earlier vouchers never
+change; the approval voucher carries the normal-series challan,
+kind 'Repeat', its repeat_request_id and its debit entry, and shows
+in the student's Financial Voucher tab, Account Statement and
+challan PDF; a rejected proof leaves the request Approved with no
+enrollment, while verification flips it to Enrolled, creates the
+target-session enrollment and credits the ledger exactly once —
+a second verify is refused; the enrolled student appears in the
+target session's marks-sheet cohort and in the assigned teacher's
+roster; while the repeat result is unpublished the Enrolled request
+still blocks re-applying, and once published the transcript counts
+only the latest attempt — hand-computed CGPA 3.75 agreed by the
+helper, the web pane and the PDF, the old attempt flagged Repeated;
+the demo transcript stays at CGPA 3.63 with no superseded rows).
+v0.11 result: **all nine suites ALL PASS on both backends** (SQLite
+and PostgreSQL identical: 43 + 52 + 60 + 72 + 64 + 52 + 59 + 52 + 64
+= 518 checks). Migration note: v0.11 adds two tables via the boot
+DDL, one additive voucher column via `ensure_columns`, and the
+guarded `backfill_v11` rate seed (verified: an admin-changed rate
+survives a reboot and the seed never duplicates). One pre-existing
+note, unrelated to v0.11: the stale v0.1-era `cuvas_demo.db` checked
+in beside the app still carries a `CHECK(role IN ('admin','student'))`
+constraint on `users` from before the faculty role existed, so the
+v0.7 faculty seed (unchanged by this step) cannot boot against that
+file — use a fresh `DB_PATH` or `DATABASE_URL` as the suites do.
+
+## Not in v0.11
 
 Posting an approved scholarship award to the fee ledger / vouchers,
-course repeat, timetable, surveys, dept/accounts/COE portals — the
-rest of Phase 2 (see `../architecture.md`).
+timetable, surveys, dept/accounts/COE portals — the rest of Phase 2
+(see `../architecture.md`).

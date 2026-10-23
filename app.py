@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.10
+MY CUVAS — Campus Management System (Demo) v0.11
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -53,6 +53,19 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      amount) or Reject (remark required); a decided application is
      final. Approving records the award ONLY — it never writes to the
      fee ledger in this version.
+ 15. v0.11 course repeat / improvement — a student applies to repeat a
+     failed course (or improve a passed one) from their PUBLISHED
+     results into a different session; the fee is an admin-set
+     per-credit-hour rate (app_settings) x the course credit hours.
+     Admin approval issues a normal fee voucher (kind='Repeat',
+     vouchers.repeat_request_id) through the same challan + ledger
+     path as every other voucher; when that voucher's proof is
+     VERIFIED, the request flips to Enrolled and the student is
+     enrolled for the course in the target session, joining the marks
+     sheet cohort and faculty roster like any other student. The
+     transcript counts ONLY the latest attempt of a repeated course
+     in SGPA/CGPA (earlier attempts stay visible, flagged 'Repeated');
+     transcripts of students without repeats are unchanged.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -316,6 +329,19 @@ DDL = [
         admin_remarks TEXT, awarded_amount INTEGER,
         decided_by TEXT, decided_at TEXT, created_at TEXT,
         UNIQUE(student_id, scheme_id, session_id))""",
+    # --- v0.11 course repeat / improvement (new tables only; plain
+    # INTEGER ids like enrollments/results — no REFERENCES, so older
+    # migration simulations stay safe on PG). app_settings is a tiny
+    # key-value store (the app had none before v0.11). ---
+    f"""CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY, value TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS repeat_requests (
+        id {_PK}, student_id INTEGER, course_id INTEGER,
+        from_session_id INTEGER, target_session_id INTEGER,
+        kind TEXT, reason TEXT,
+        status TEXT DEFAULT 'Requested', admin_remarks TEXT,
+        voucher_id INTEGER, decided_by TEXT, decided_at TEXT,
+        created_at TEXT)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -332,7 +358,9 @@ EXTRA_COLUMNS = {
                  ("fee_plan_id", "INTEGER"), ("payment_channel", "TEXT"),
                  ("paid_at", "TEXT"), ("proof_filename", "TEXT"),
                  ("proof_mimetype", "TEXT"),
-                 ("proof_blob", "BYTEA" if PG else "BLOB")],
+                 ("proof_blob", "BYTEA" if PG else "BLOB"),
+                 # --- v0.11: links a repeat voucher to its request ---
+                 ("repeat_request_id", "INTEGER")],
     "fee_plan_lines": [("plan_id", "INTEGER"), ("head_id", "INTEGER")],
     "ledger_entries": [("voucher_id", "INTEGER")],
     # --- v0.4 results columns (marks, publish state, session/enrollment link) ---
@@ -375,6 +403,7 @@ def init_db():
     backfill_v07(db)
     backfill_v09(db)
     backfill_v10(db)
+    backfill_v11(db)
     db.commit()
     db.conn.close()
 
@@ -615,6 +644,42 @@ def backfill_v10(db):
                eligibility,is_open,deadline,created_at)
                VALUES (?,?,?,?,1,NULL,?)""",
             (name, provider, description, eligibility, _now()))
+
+
+# ------------------------------------------------- v0.11 app settings + seed
+def get_setting(db, key, default=None):
+    row = db.execute("SELECT value FROM app_settings WHERE key=?",
+                     (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db, key, value):
+    if db.execute("SELECT key FROM app_settings WHERE key=?",
+                  (key,)).fetchone():
+        db.execute("UPDATE app_settings SET value=? WHERE key=?",
+                   (value, key))
+    else:
+        db.execute("INSERT INTO app_settings (key,value) VALUES (?,?)",
+                   (key, value))
+
+
+def repeat_fee_per_ch(db):
+    """Admin-set repeat fee per credit hour (Rs). Falls back to the
+    seeded default when the stored value is somehow unusable."""
+    try:
+        return max(0, int(get_setting(db, "repeat_fee_per_ch", "2000")))
+    except (TypeError, ValueError):
+        return 2000
+
+
+def backfill_v11(db):
+    """Idempotent v0.11 seed: the default repeat fee per credit hour.
+    Only written while the key is absent, so an admin-changed rate is
+    never overwritten by a reboot."""
+    if get_setting(db, "repeat_fee_per_ch") is None:
+        db.execute(
+            "INSERT INTO app_settings (key,value) VALUES (?,?)",
+            ("repeat_fee_per_ch", "2000"))
 
 
 def _today():
@@ -2585,6 +2650,12 @@ def admin_voucher_verify(voucher_id):
     if not already:  # credit exactly once
         channel = v.get("payment_channel") or "Bank"
         ledger_add(db, v, _today(), f"Payment received — {channel}", credit=v["amount"] or 0)
+    # --- v0.11: a verified repeat voucher activates its repeat request
+    # (request -> Enrolled + the target-session enrollment). Runs inside
+    # the same commit; the helper is a no-op unless the request is still
+    # 'Approved', so re-verification can never double-activate. ---
+    if v.get("repeat_request_id"):
+        activate_repeat_request(db, v["repeat_request_id"])
     db.commit()
     flash(f"Voucher {v['challan_no']} verified — marked Paid.", "ok")
     return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
@@ -2731,7 +2802,15 @@ def result_grade_gp(row, bands):
 def transcript_data(db, student_id, published_only=True):
     """The ONE transcript computation, used by the student web tab and the
     transcript PDF. Returns (transcript, cgpa, total_credit_hours) where
-    transcript = {semester_no: {"rows": [...], "sgpa": x, "cgpa": running}}."""
+    transcript = {semester_no: {"rows": [...], "sgpa": x, "cgpa": running}}.
+
+    v0.11 repeat rule: when the student has (published) results for the
+    SAME course in multiple sessions, only the LATEST attempt counts in
+    SGPA/CGPA — latest = greatest session (sessions are created in
+    chronological order, so the session id is the ordering), tie-broken
+    by the greatest result id. Earlier attempts still appear in their
+    semester group, flagged "superseded", with their points excluded.
+    A student with no repeated course gets exactly the pre-v0.11 sums."""
     bands = get_grade_bands(db)
     pub = " AND COALESCE(r.is_published,0)=1" if published_only else ""
     rows = db.execute(
@@ -2739,6 +2818,14 @@ def transcript_data(db, student_id, published_only=True):
             FROM results r JOIN courses c ON c.id=r.course_id
             WHERE r.student_id=?{pub} ORDER BY r.semester_no, c.code""",
         (student_id,)).fetchall()
+    latest_id = {}
+    for r in rows:
+        key = (r.get("session_id") or 0, r["id"])
+        cur = latest_id.get(r["course_id"])
+        if cur is None or key > cur[0]:
+            latest_id[r["course_id"]] = (key, r["id"])
+    superseded_ids = {r["id"] for r in rows
+                      if latest_id[r["course_id"]][1] != r["id"]}
     transcript, cumulative_qp, cumulative_ch, cgpa = {}, 0.0, 0, 0.0
     for sem in sorted({r["semester_no"] for r in rows}):
         items, qp, ch = [], 0.0, 0
@@ -2746,11 +2833,14 @@ def transcript_data(db, student_id, published_only=True):
             credits = (r["credit_theory"] or 0) + (r["credit_lab"] or 0)
             grade, gp = result_grade_gp(r, bands)
             points = round((gp or 0.0) * credits, 2)
-            qp += points
-            ch += credits
+            superseded = r["id"] in superseded_ids
+            if not superseded:
+                qp += points
+                ch += credits
             marks = r.get("marks_obtained")
             items.append({**r, "credits": credits, "grade": grade,
                           "grade_point": gp, "quality_points": points,
+                          "superseded": superseded,
                           "marks_display": ("Absent" if r.get("is_absent") else
                                             ("—" if marks is None else
                                              (f"{marks:g}" if isinstance(marks, float) else str(marks))))})
@@ -2810,7 +2900,11 @@ def save_result(db, student, course, session_id, semester_no, marks, is_absent, 
 
 def sheet_students(db, program_id, session_id, course_id, semester_no):
     """Class list for a marks sheet: Active students of program+session, plus
-    any student who already has a result for this course set."""
+    any student who already has a result for this course set, plus (v0.11)
+    any student explicitly enrolled for this course in this session —
+    an activated course-repeat enrols the student for the course in the
+    target session even though their admission session (and the program
+    pattern above) belongs to an earlier session."""
     rows = db.execute(
         """SELECT * FROM students WHERE program_id=? AND session_id=?
            AND COALESCE(status,'Active')='Active'""",
@@ -2826,6 +2920,20 @@ def sheet_students(db, program_id, session_id, course_id, semester_no):
             if s:
                 rows.append(s)
                 seen.add(s["id"])
+    if session_id:
+        sess = db.execute("SELECT name FROM academic_sessions WHERE id=?",
+                          (session_id,)).fetchone()
+        if sess:
+            for r in db.execute(
+                    """SELECT DISTINCT student_id FROM enrollments
+                       WHERE course_id=? AND session_name=?""",
+                    (course_id, sess["name"])).fetchall():
+                if r["student_id"] not in seen:
+                    s = db.execute("SELECT * FROM students WHERE id=?",
+                                   (r["student_id"],)).fetchone()
+                    if s:
+                        rows.append(s)
+                        seen.add(s["id"])
     return sorted(rows, key=lambda s: s["name"])
 
 
@@ -3249,7 +3357,8 @@ def build_transcript_pdf(db, student_id):
                                styles["Heading3"]))
         rows = [["Code", "Course Title", "Cr. Hrs", "Marks", "Grade", "Grade Points", "Quality Points"]]
         for r in block["rows"]:
-            rows.append([r["code"], r["title"], str(r["credits"]), r["marks_display"],
+            title = r["title"] + (" (Repeated)" if r.get("superseded") else "")
+            rows.append([r["code"], title, str(r["credits"]), r["marks_display"],
                          r["grade"] or "—",
                          f"{r['grade_point']:.2f}" if r["grade_point"] is not None else "—",
                          f"{r['quality_points']:.2f}"])
@@ -3263,6 +3372,13 @@ def build_transcript_pdf(db, student_id):
                                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                                 ("ALIGN", (2, 0), (-1, -1), "CENTER")]))
         story += [lt, Spacer(1, 4 * mm)]
+    if any(r.get("superseded") for b in transcript.values() for r in b["rows"]):
+        story.append(Paragraph(
+            "Note: a course marked (Repeated) is an earlier attempt that was "
+            "superseded by a later attempt of the same course — only the "
+            "latest attempt counts towards the SGPA/CGPA above.",
+            styles["BodyText"]))
+        story.append(Spacer(1, 3 * mm))
     story += [Spacer(1, 2 * mm),
               Paragraph(f"<b>Cumulative GPA (CGPA): {cgpa:.2f}</b>", styles["Heading3"]),
               Spacer(1, 6 * mm),
@@ -5478,6 +5594,376 @@ def admin_scholarship_decide(app_id):
         flash("Application rejected.", "ok")
         return back
     flash("Please choose a decision.", "error")
+    return back
+
+
+# ============================================================ v0.11 REPEAT
+# Course Repeat / Improvement. A student applies from their PUBLISHED
+# results (an F must be repeated; a passed course may be improved) into
+# a DIFFERENT session. The admin approves by issuing a normal fee
+# voucher (kind='Repeat', vouchers.repeat_request_id) priced at the
+# admin-set per-credit-hour rate x the course's credit hours; the
+# voucher flows through the usual challan / proof / verify path, and
+# verification activates the request (Enrolled + target-session
+# enrollment). The transcript counts only the latest attempt of a
+# repeated course (see transcript_data).
+
+REPEAT_STATUSES = ["Requested", "Approved", "Enrolled", "Rejected", "Cancelled"]
+
+
+def _attempt_key(r):
+    """Ordering of one result attempt: session first (sessions are
+    created chronologically, so the id IS the ordering), then row id."""
+    return (r.get("session_id") or 0, r["id"])
+
+
+def _published_attempts(db, student_id):
+    return db.execute(
+        """SELECT r.*, c.code, c.title, c.credit_theory, c.credit_lab,
+                  ss.name from_sess_name
+           FROM results r JOIN courses c ON c.id=r.course_id
+           LEFT JOIN academic_sessions ss ON ss.id=r.session_id
+           WHERE r.student_id=? AND COALESCE(r.is_published,0)=1
+           ORDER BY r.id""", (student_id,)).fetchall()
+
+
+def latest_attempt(db, student_id, course_id):
+    """The student's latest PUBLISHED attempt at a course, or None."""
+    rows = [r for r in _published_attempts(db, student_id)
+            if r["course_id"] == course_id]
+    return max(rows, key=_attempt_key) if rows else None
+
+
+def active_repeat_request(db, student_id, course_id):
+    """The request that currently blocks a new application for this
+    course: 'Requested'/'Approved' always block; 'Enrolled' blocks
+    until the repeat attempt has been published in its target session."""
+    for req in db.execute(
+            """SELECT * FROM repeat_requests WHERE student_id=? AND course_id=?
+               AND status IN ('Requested','Approved','Enrolled')
+               ORDER BY id DESC""", (student_id, course_id)).fetchall():
+        if req["status"] in ("Requested", "Approved"):
+            return req
+        done = db.execute(
+            """SELECT COUNT(*) c FROM results WHERE student_id=?
+               AND course_id=? AND session_id=?
+               AND COALESCE(is_published,0)=1""",
+            (student_id, course_id, req["target_session_id"])).fetchone()["c"]
+        if not done:
+            return req
+    return None
+
+
+def repeat_eligibility(db, student_id):
+    """Courses the student may apply to repeat / improve right now:
+    the latest PUBLISHED attempt per course decides — grade F means
+    'Repeat', any passed grade means 'Improvement'. Courses with an
+    active repeat request are not eligible (they show under My Repeat
+    Requests instead). Unpublished results never appear here."""
+    bands = get_grade_bands(db)
+    latest = {}
+    for r in _published_attempts(db, student_id):
+        cur = latest.get(r["course_id"])
+        if cur is None or _attempt_key(r) > _attempt_key(cur):
+            latest[r["course_id"]] = r
+    out = []
+    for course_id, r in latest.items():
+        grade, _gp = result_grade_gp(r, bands)
+        if grade is None:
+            continue
+        if active_repeat_request(db, student_id, course_id):
+            continue
+        out.append({**r, "grade": grade,
+                    "kind": "Repeat" if grade == "F" else "Improvement",
+                    "credits": (r["credit_theory"] or 0)
+                               + (r["credit_lab"] or 0)})
+    return sorted(out, key=lambda x: x["code"])
+
+
+def _repeat_request_full(db, req_id):
+    return db.execute(
+        """SELECT rr.*, c.code course_code, c.title course_title,
+                  c.semester_no course_semester,
+                  c.credit_theory, c.credit_lab,
+                  fs.name from_sess_name, ts.name target_sess_name,
+                  s.name student_name, s.registration_no,
+                  p.name prog_name,
+                  v.challan_no, v.status voucher_status,
+                  v.amount voucher_amount
+           FROM repeat_requests rr
+           JOIN courses c ON c.id=rr.course_id
+           JOIN students s ON s.id=rr.student_id
+           LEFT JOIN academic_sessions fs ON fs.id=rr.from_session_id
+           LEFT JOIN academic_sessions ts ON ts.id=rr.target_session_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN vouchers v ON v.id=rr.voucher_id
+           WHERE rr.id=?""", (req_id,)).fetchone()
+
+
+def _own_repeat_request_or_none(db, req_id):
+    req = db.execute("SELECT * FROM repeat_requests WHERE id=?",
+                     (req_id,)).fetchone()
+    if not req or req["student_id"] != session.get("student_id"):
+        return None
+    return req
+
+
+def create_repeat_voucher(db, req, student, course):
+    """Issue the repeat fee voucher for an approved request through the
+    SAME path as plan vouchers: sequential challan number + the debit
+    ledger entry at creation. Caller commits. Returns the voucher id."""
+    credits = (course.get("credit_theory") or 0) + (course.get("credit_lab") or 0)
+    amount = int(round(repeat_fee_per_ch(db) * credits))
+    title = (f"Course Repeat — {course['code']}" if req["kind"] == "Repeat"
+             else f"Course Improvement — {course['code']}")
+    challan = next_challan_no(db)
+    vid = db.insert(
+        """INSERT INTO vouchers (student_id,challan_no,title,amount,due_date,status,remarks,
+           session_id,semester_no,kind,repeat_request_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (student["id"], challan, title, amount, _add_days(_today(), 14),
+         "Pending", "", req["target_session_id"], course["semester_no"],
+         "Repeat", req["id"]))
+    v = {"id": vid, "student_id": student["id"], "challan_no": challan,
+         "title": title}
+    ledger_add(db, v, _today(), f"{title} charged", debit=amount)
+    return vid
+
+
+def activate_repeat_request(db, req_id):
+    """Payment activation for a repeat request, called from the voucher
+    verification success point (inside its commit). Idempotent: only an
+    'Approved' request flips to 'Enrolled', and the target-session
+    enrollment is created only if missing. Returns True when it ran."""
+    req = db.execute("SELECT * FROM repeat_requests WHERE id=?",
+                     (req_id,)).fetchone()
+    if not req or req["status"] != "Approved":
+        return False
+    db.execute("UPDATE repeat_requests SET status='Enrolled' WHERE id=?",
+               (req_id,))
+    course = db.execute("SELECT * FROM courses WHERE id=?",
+                        (req["course_id"],)).fetchone()
+    sess = db.execute("SELECT name FROM academic_sessions WHERE id=?",
+                      (req["target_session_id"],)).fetchone()
+    if course and sess:
+        enr = db.execute(
+            """SELECT id FROM enrollments WHERE student_id=? AND course_id=?
+               AND session_name=?""",
+            (req["student_id"], req["course_id"], sess["name"])).fetchone()
+        if not enr:
+            db.insert(
+                """INSERT INTO enrollments (student_id,course_id,session_name,
+                   semester_no) VALUES (?,?,?,?)""",
+                (req["student_id"], req["course_id"], sess["name"],
+                 course["semester_no"]))
+    return True
+
+
+# ------------------------------------------------------------ student side
+@app.route("/student/repeat")
+@role_required("student")
+def student_repeat():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid)
+    if not student:
+        flash("No student record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    sessions = db.execute(
+        "SELECT * FROM academic_sessions ORDER BY id").fetchall()
+    my_requests = [_repeat_request_full(db, r["id"]) for r in db.execute(
+        "SELECT id FROM repeat_requests WHERE student_id=? ORDER BY id DESC",
+        (sid,)).fetchall()]
+    return render_template(
+        "student_repeat.html", student=student,
+        eligible=repeat_eligibility(db, sid), sessions=sessions,
+        my_requests=my_requests, rate=repeat_fee_per_ch(db))
+
+
+@app.route("/student/repeat/apply", methods=["POST"])
+@role_required("student")
+def student_repeat_apply():
+    db = get_db()
+    sid = session.get("student_id")
+    back = redirect(url_for("student_repeat"))
+    course_id = _int_or_none(request.form.get("course_id"))
+    target_id = _int_or_none(request.form.get("target_session_id"))
+    reason = request.form.get("reason", "").strip()
+    course = db.execute("SELECT * FROM courses WHERE id=?",
+                        (course_id,)).fetchone() if course_id else None
+    target = db.execute("SELECT * FROM academic_sessions WHERE id=?",
+                        (target_id,)).fetchone() if target_id else None
+    if not course or not target:
+        flash("Please choose a course and a target session.", "error")
+        return back
+    att = latest_attempt(db, sid, course["id"])
+    if not att:
+        flash("That course is not eligible — only courses with a published "
+              "result can be repeated or improved.", "error")
+        return back
+    # the original attempt's session: the result's own session, falling
+    # back to the student's admission session for pre-v0.4 seeded rows
+    student = student_full(db, sid)
+    from_session_id = att.get("session_id") or (student or {}).get("session_id")
+    if from_session_id and target["id"] == from_session_id:
+        flash("The target session must be different from the session of "
+              "the original attempt.", "error")
+        return back
+    if active_repeat_request(db, sid, course["id"]):
+        flash(f"You already have an active repeat request for "
+              f"{course['code']} — see My Repeat Requests below.", "error")
+        return back
+    enr = db.execute(
+        """SELECT id FROM enrollments WHERE student_id=? AND course_id=?
+           AND session_name=?""", (sid, course["id"], target["name"])).fetchone()
+    if enr:
+        flash(f"You are already enrolled in {course['code']} for "
+              f"{target['name']}.", "error")
+        return back
+    bands = get_grade_bands(db)
+    grade, _gp = result_grade_gp(att, bands)
+    if grade is None:
+        flash("That course is not eligible for a repeat application.",
+              "error")
+        return back
+    kind = "Repeat" if grade == "F" else "Improvement"
+    db.insert(
+        """INSERT INTO repeat_requests (student_id,course_id,from_session_id,
+           target_session_id,kind,reason,status,created_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (sid, course["id"], att.get("session_id"), target["id"], kind,
+         reason or None, "Requested", _now()))
+    db.commit()
+    flash(f"{kind} request for {course['code']} submitted — the admin "
+          f"office will review it and issue the fee voucher on approval.",
+          "ok")
+    return back
+
+
+@app.route("/student/repeat/<int:req_id>/cancel", methods=["POST"])
+@role_required("student")
+def student_repeat_cancel(req_id):
+    db = get_db()
+    req = _own_repeat_request_or_none(db, req_id)
+    if not req:
+        flash("That repeat request does not belong to your account.",
+              "error")
+        return redirect(url_for("student_repeat"))
+    if req["status"] != "Requested":
+        flash("Only a request that is still awaiting review can be "
+              "cancelled — an approved request already has a voucher "
+              "issued against it.", "error")
+        return redirect(url_for("student_repeat"))
+    db.execute("UPDATE repeat_requests SET status='Cancelled' WHERE id=?",
+               (req_id,))
+    db.commit()
+    flash("Repeat request cancelled.", "ok")
+    return redirect(url_for("student_repeat"))
+
+
+# -------------------------------------------------------------- admin side
+@app.route("/admin/repeat")
+@role_required("admin")
+def admin_repeat():
+    db = get_db()
+    status = request.args.get("status", "")
+    q = request.args.get("q", "").strip()
+    sql = ("SELECT rr.id FROM repeat_requests rr "
+           "JOIN students s ON s.id=rr.student_id WHERE 1=1")
+    params = []
+    if status in REPEAT_STATUSES:
+        sql += " AND rr.status=?"
+        params.append(status)
+    if q:
+        sql += f" AND (s.name {LIKE} ? OR s.registration_no {LIKE} ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY rr.id DESC"
+    rows = [_repeat_request_full(db, r["id"])
+            for r in db.execute(sql, params).fetchall()]
+    counts = {s: db.execute(
+        "SELECT COUNT(*) c FROM repeat_requests WHERE status=?",
+        (s,)).fetchone()["c"] for s in REPEAT_STATUSES}
+    return render_template(
+        "admin_repeat.html", rows=rows, counts=counts, status=status, q=q,
+        statuses=REPEAT_STATUSES, rate=repeat_fee_per_ch(db))
+
+
+@app.route("/admin/repeat/rate", methods=["POST"])
+@role_required("admin")
+def admin_repeat_rate():
+    db = get_db()
+    rate = _int_or_none(request.form.get("rate", "").strip())
+    if rate is None or rate <= 0:
+        flash("Enter a valid repeat fee per credit hour (a positive "
+              "number of rupees).", "error")
+        return redirect(url_for("admin_repeat"))
+    set_setting(db, "repeat_fee_per_ch", str(rate))
+    db.commit()
+    flash(f"Repeat fee updated to Rs {rate:,} per credit hour — this "
+          f"applies to vouchers issued from now on; vouchers already "
+          f"issued keep their amount.", "ok")
+    return redirect(url_for("admin_repeat"))
+
+
+@app.route("/admin/repeat/<int:req_id>/approve", methods=["POST"])
+@role_required("admin")
+def admin_repeat_approve(req_id):
+    db = get_db()
+    req = db.execute("SELECT * FROM repeat_requests WHERE id=?",
+                     (req_id,)).fetchone()
+    if not req:
+        abort(404)
+    back = redirect(url_for("admin_repeat"))
+    if req["status"] != "Requested":
+        flash("Only a request awaiting review can be approved — this "
+              "one has already been decided.", "error")
+        return back
+    student = db.execute("SELECT * FROM students WHERE id=?",
+                         (req["student_id"],)).fetchone()
+    course = db.execute("SELECT * FROM courses WHERE id=?",
+                        (req["course_id"],)).fetchone()
+    if not student or not course:
+        flash("The student or course for this request no longer exists.",
+              "error")
+        return back
+    vid = create_repeat_voucher(db, req, student, course)
+    db.execute(
+        """UPDATE repeat_requests SET status='Approved', voucher_id=?,
+           decided_by=?, decided_at=? WHERE id=?""",
+        (vid, session.get("display_name"), _now(), req_id))
+    db.commit()
+    v = get_voucher(db, vid)
+    flash(f"Request approved — repeat voucher {v['challan_no']} of "
+          f"Rs {v['amount']:,} issued to {student['name']}. The student "
+          f"is enrolled automatically once the payment is verified.",
+          "ok")
+    return back
+
+
+@app.route("/admin/repeat/<int:req_id>/reject", methods=["POST"])
+@role_required("admin")
+def admin_repeat_reject(req_id):
+    db = get_db()
+    req = db.execute("SELECT * FROM repeat_requests WHERE id=?",
+                     (req_id,)).fetchone()
+    if not req:
+        abort(404)
+    back = redirect(url_for("admin_repeat"))
+    if req["status"] != "Requested":
+        flash("Only a request awaiting review can be rejected — this "
+              "one has already been decided.", "error")
+        return back
+    remarks = request.form.get("admin_remarks", "").strip()
+    if not remarks:
+        flash("Remarks are required when rejecting — the student needs "
+              "to know why.", "error")
+        return back
+    db.execute(
+        """UPDATE repeat_requests SET status='Rejected', admin_remarks=?,
+           decided_by=?, decided_at=? WHERE id=?""",
+        (remarks, session.get("display_name"), _now(), req_id))
+    db.commit()
+    flash("Repeat request rejected.", "ok")
     return back
 
 

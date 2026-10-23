@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='transcript') }}">← Back to Transcript</a></p>
+<div class="toolbar"><h2>Course Repeat / Improvement</h2></div>
+<p class="muted">{{ student.name }} · {{ student.registration_no }} · {{ student.prog_name }} · {{ student.dept_name }}</p>
+
+<div class="card">
+<h3>1 · Courses You Can Repeat or Improve</h3>
+<p class="muted">Eligibility comes from your <strong>published</strong> results only: a course you failed (<strong>F</strong>) can be <strong>repeated</strong>, and a passed course can be taken again for <strong>improvement</strong>. You apply into a different session; the repeat/improvement fee is <strong>Rs {{ "{:,}".format(rate) }} per credit hour</strong>. On approval the office issues a fee voucher — once its payment is verified, you are enrolled in the course for the target session. On the transcript only your <strong>latest</strong> attempt of a course counts; earlier attempts stay visible, marked “Repeated”.</p>
+<table>
+<tr><th>Course</th><th>Credit Hours</th><th>Original Session</th><th>Grade</th><th>Type</th><th>Apply</th></tr>
+{% for e in eligible %}
+<tr>
+<td><strong>{{ e.code }}</strong> — {{ e.title }}</td>
+<td>{{ e.credits }}</td>
+<td>{{ e.from_sess_name or student.session_name or '—' }}</td>
+<td>{{ e.grade }}</td>
+<td><span class="pill {{ 'rejected' if e.kind=='Repeat' else 'pending' }}">{{ e.kind }}</span></td>
+<td>
+<form method="post" action="{{ url_for('student_repeat_apply') }}">
+<input type="hidden" name="course_id" value="{{ e.course_id }}">
+<label>Target session</label>
+<select name="target_session_id" required>
+<option value="">— choose —</option>
+{% for s in sessions %}<option value="{{ s.id }}" {% if e.session_id and s.id==e.session_id %}disabled{% endif %}>{{ s.name }}{% if e.session_id and s.id==e.session_id %} (original attempt){% endif %}</option>{% endfor %}
+</select>
+<label>Reason (optional)</label>
+<input type="text" name="reason" placeholder="e.g. Failed in the first attempt">
+<button class="btn small green" type="submit">Apply for {{ e.kind }}</button>
+</form>
+</td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="muted">No courses are currently eligible — either you have no published results yet, or every eligible course already has an active repeat request (see below).</td></tr>
+{% endfor %}
+</table>
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3>2 · My Repeat Requests</h3>
+<table>
+<tr><th>Course</th><th>Type</th><th>From → Target Session</th><th>Status</th><th>Fee Voucher</th><th>Admin Remarks</th><th>Applied</th><th></th></tr>
+{% for r in my_requests %}
+<tr>
+<td><strong>{{ r.course_code }}</strong> — {{ r.course_title }}</td>
+<td>{{ r.kind }}</td>
+<td>{{ r.from_sess_name or '—' }} → {{ r.target_sess_name or '—' }}</td>
+<td><span class="pill {{ 'paid' if r.status=='Enrolled' else 'rejected' if r.status=='Rejected' else 'pending' if r.status=='Approved' else 'split' if r.status=='Cancelled' else 'submitted' }}">{{ r.status }}</span>
+{% if r.status=='Approved' %}<br><span class="muted">Pay the voucher to complete enrolment</span>{% elif r.status=='Enrolled' %}<br><span class="muted">Enrolled for {{ r.target_sess_name }}</span>{% endif %}</td>
+<td>{% if r.voucher_id %}Challan {{ r.challan_no }}<br>Rs {{ "{:,}".format(r.voucher_amount) }} · {{ r.voucher_status }}<br><a class="btn small ghost" href="{{ url_for('student_dashboard', tab='voucher') }}">Open in Financial Voucher</a>{% else %}—{% endif %}</td>
+<td>{{ r.admin_remarks or '—' }}</td>
+<td>{{ r.created_at[:10] if r.created_at else '—' }}</td>
+<td>{% if r.status=='Requested' %}<form method="post" action="{{ url_for('student_repeat_cancel', req_id=r.id) }}" onsubmit="return confirm('Cancel this {{ r.kind }} request for {{ r.course_code }}?');"><button class="btn small danger" type="submit">Cancel</button></form>{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="8" class="muted">No repeat requests yet.</td></tr>
+{% endfor %}
+</table>
+<p class="muted">A request can be cancelled only while it is still awaiting review — once approved, a fee voucher has been issued against it. Pay an approved request's voucher from the <strong>Financial Voucher</strong> tab (upload the paid proof there); enrolment completes when the accounts office verifies the payment.</p>
+</div>
+</div>
+{% endblock %}

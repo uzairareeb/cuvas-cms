@@ -1,0 +1,56 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Course Repeat / Improvement</h2></div>
+
+<h3>Repeat Fee Setting</h3>
+<form method="post" action="{{ url_for('admin_repeat_rate') }}" class="toolbar">
+<label>Fee per credit hour (Rs)</label>
+<input type="number" name="rate" min="1" value="{{ rate }}" style="width:140px">
+<button class="btn" type="submit">Save Rate</button>
+<span class="muted">A request's fee = this rate × the course's credit hours, fixed on the voucher at approval time. Changing the rate affects only vouchers issued afterwards.</span>
+</form>
+
+<h3 style="margin-top:26px">Requests</h3>
+<p class="muted">Requested: <strong>{{ counts['Requested'] }}</strong> · Approved: <strong>{{ counts['Approved'] }}</strong> · Enrolled: <strong>{{ counts['Enrolled'] }}</strong> · Rejected: <strong>{{ counts['Rejected'] }}</strong> · Cancelled: <strong>{{ counts['Cancelled'] }}</strong></p>
+<form method="get" class="toolbar">
+<select name="status">
+<option value="" {% if not status %}selected{% endif %}>All statuses</option>
+{% for s in statuses %}<option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+</select>
+<input type="text" name="q" value="{{ q }}" placeholder="Search name / registration no">
+<button class="btn" type="submit">Search</button>
+</form>
+<table>
+<tr><th>Student</th><th>Course</th><th>Type</th><th>From → Target Session</th><th>Reason</th><th>Status</th><th>Fee Voucher</th><th>Decided By</th><th>Actions</th></tr>
+{% for r in rows %}
+<tr>
+<td>{{ r.student_name }}<br><span class="muted">{{ r.registration_no }} · {{ r.prog_name or '—' }}</span></td>
+<td><strong>{{ r.course_code }}</strong> — {{ r.course_title }}<br><span class="muted">{{ (r.credit_theory or 0) + (r.credit_lab or 0) }} credit hours · Semester {{ r.course_semester }}</span></td>
+<td>{{ r.kind }}</td>
+<td>{{ r.from_sess_name or '—' }} → {{ r.target_sess_name or '—' }}</td>
+<td>{{ r.reason or '—' }}</td>
+<td><span class="pill {{ 'paid' if r.status=='Enrolled' else 'rejected' if r.status=='Rejected' else 'pending' if r.status=='Approved' else 'split' if r.status=='Cancelled' else 'submitted' }}">{{ r.status }}</span>
+{% if r.admin_remarks %}<br><span class="muted">{{ r.admin_remarks }}</span>{% endif %}</td>
+<td>{% if r.voucher_id %}<a href="{{ url_for('admin_voucher_detail', voucher_id=r.voucher_id) }}">{{ r.challan_no }}</a><br>Rs {{ "{:,}".format(r.voucher_amount) }} · {{ r.voucher_status }}{% else %}—{% endif %}</td>
+<td>{% if r.decided_by %}{{ r.decided_by }}<br><span class="muted">{{ r.decided_at[:10] if r.decided_at else '' }}</span>{% else %}—{% endif %}</td>
+<td class="actions">
+{% if r.status=='Requested' %}
+<form method="post" action="{{ url_for('admin_repeat_approve', req_id=r.id) }}" onsubmit="return confirm('Approve and issue the repeat fee voucher for {{ r.course_code }}?');"><button class="btn small green" type="submit">Approve + Issue Voucher</button></form>
+<form method="post" action="{{ url_for('admin_repeat_reject', req_id=r.id) }}">
+<input type="text" name="admin_remarks" placeholder="Reason for rejection (required)">
+<button class="btn small danger" type="submit">Reject</button></form>
+{% elif r.status=='Approved' %}
+<span class="muted">Voucher issued — enrolment completes when its payment is verified.</span>
+{% elif r.status=='Enrolled' %}
+<span class="muted">Enrolled in {{ r.target_sess_name }}.</span>
+{% else %}
+<span class="muted">—</span>
+{% endif %}
+</td>
+</tr>
+{% else %}
+<tr><td colspan="9" class="muted">No repeat requests match.</td></tr>
+{% endfor %}
+</table>
+<p class="muted">Approving issues a normal fee voucher (kind “Repeat”) in the student's Financial Voucher tab with a debit in the ledger; the student uploads the paid proof there and, once an admin verifies it on the voucher page, the request flips to <strong>Enrolled</strong> and the student joins the course's marks sheet and roster for the target session. Approval cannot be undone from here — a decided request is final.</p>
+{% endblock %}
