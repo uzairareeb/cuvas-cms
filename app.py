@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.12
+MY CUVAS — Campus Management System (Demo) v0.13
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -77,6 +77,19 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      (transport_routes + transport_stops, seeded with two clearly-demo
      routes); students browse the active routes and search by stop
      name.
+ 17. v0.13 campus life — admin-configured service links/info for the
+     LMS, Library and student Email (five app_settings keys, edited on
+     /admin/campus) surface as identical cards in the student and
+     faculty Campus Life pages; only configured services show a live
+     button. Student societies (societies + society_members) are
+     seeded with three demo societies; students request to join and an
+     admin approves or rejects (a rejected student may request again).
+     Vehicle entry passes (vehicle_passes) are applied for by the
+     student, approved by an admin (pass number VEH-<year>-<id> and a
+     validity date are stamped at approval), and downloaded as a
+     Code39-barcode pass PDF; the same vehicle number can never hold
+     two live passes. (Step 17 surveys were deferred by the user and
+     are deliberately NOT part of this release.)
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -368,6 +381,25 @@ DDL = [
     f"""CREATE TABLE IF NOT EXISTS transport_stops (
         id {_PK}, route_id INTEGER, stop_name TEXT NOT NULL,
         pickup_time TEXT, sort_order INTEGER DEFAULT 0)""",
+    # --- v0.13 campus life (new tables only; plain INTEGER ids like
+    # enrollments/results — no REFERENCES, so older migration
+    # simulations stay safe on PG). The LMS/Library/Email service
+    # links + info live in the v0.11 app_settings store, not tables. ---
+    f"""CREATE TABLE IF NOT EXISTS societies (
+        id {_PK}, name TEXT NOT NULL, description TEXT,
+        advisor_faculty_id INTEGER, is_active INTEGER DEFAULT 1,
+        created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS society_members (
+        id {_PK}, society_id INTEGER, student_id INTEGER,
+        status TEXT DEFAULT 'Requested', created_at TEXT,
+        decided_by TEXT, decided_at TEXT,
+        UNIQUE(society_id, student_id))""",
+    f"""CREATE TABLE IF NOT EXISTS vehicle_passes (
+        id {_PK}, student_id INTEGER, vehicle_type TEXT,
+        vehicle_no TEXT, make_model TEXT, color TEXT,
+        status TEXT DEFAULT 'Requested', pass_no TEXT,
+        valid_till TEXT, admin_remarks TEXT,
+        decided_by TEXT, decided_at TEXT, created_at TEXT)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -431,6 +463,7 @@ def init_db():
     backfill_v10(db)
     backfill_v11(db)
     backfill_v12(db)
+    backfill_v13(db)
     db.commit()
     db.conn.close()
 
@@ -743,6 +776,48 @@ def backfill_v12(db):
                 """INSERT INTO transport_stops (route_id,stop_name,
                    pickup_time,sort_order) VALUES (?,?,?,?)""",
                 (rid, stop_name, pickup_time, i))
+
+
+# ------------------------------------------------- v0.13 campus life seed
+CAMPUS_SETTING_KEYS = ("lms_url", "library_url", "library_info",
+                       "email_url", "email_info")
+
+DEMO_SOCIETIES = [
+    ("Literary Society",
+     "Poetry, debates, creative writing and the annual literary "
+     "festival. (Demo data, editable by the admin.)", None),
+    ("Sports Society",
+     "Cricket, football and athletics — inter-department tournaments "
+     "and the annual sports gala. (Demo data, editable by the admin.)",
+     None),
+    ("IT & Robotics Society",
+     "Programming contests, robotics projects and tech talks. "
+     "(Demo data, editable by the admin.)", "demo"),
+]
+
+
+def backfill_v13(db):
+    """Idempotent v0.13 seed: make sure the five Campus Life settings
+    keys exist (as empty strings — an admin fills them in; existing
+    values are NEVER overwritten) and seed the three demo societies
+    ONLY while the societies table is empty, so admin edits and
+    deletions are never undone."""
+    for key in CAMPUS_SETTING_KEYS:
+        if get_setting(db, key) is None:
+            db.execute("INSERT INTO app_settings (key,value) VALUES (?,?)",
+                       (key, ""))
+    if db.execute("SELECT COUNT(*) c FROM societies").fetchone()["c"]:
+        return
+    demo_faculty = db.execute(
+        "SELECT id FROM faculty WHERE email=?",
+        ("demo.teacher@cuvas.edu.pk",)).fetchone()
+    demo_faculty_id = demo_faculty["id"] if demo_faculty else None
+    for name, description, advisor in DEMO_SOCIETIES:
+        db.insert(
+            """INSERT INTO societies (name,description,advisor_faculty_id,
+               is_active,created_at) VALUES (?,?,?,?,?)""",
+            (name, description,
+             demo_faculty_id if advisor == "demo" else None, 1, _now()))
 
 
 def _today():
@@ -6655,6 +6730,545 @@ def student_transport():
             continue  # search: only routes serving a matching stop
         routes.append({"route": r, "stops": stops, "match_ids": match_ids})
     return render_template("student_transport.html", routes=routes, q=q)
+
+
+# ------------------------------------------------------- v0.13 campus life
+def _campus_values(db):
+    return {k: (get_setting(db, k, "") or "") for k in CAMPUS_SETTING_KEYS}
+
+
+def _is_valid_service_url(value):
+    return value == "" or value.startswith(("http://", "https://"))
+
+
+def _campus_societies(db, student_id=None):
+    """Society rows for display: advisor name, approved-member count,
+    pending count, and (when student_id is given) the student's own
+    membership row. Only ACTIVE societies unless include_inactive."""
+    rows = db.execute(
+        """SELECT s.*, f.full_name advisor_name,
+                  (SELECT COUNT(*) FROM society_members m
+                    WHERE m.society_id=s.id AND m.status='Approved')
+                      member_count,
+                  (SELECT COUNT(*) FROM society_members m
+                    WHERE m.society_id=s.id AND m.status='Requested')
+                      pending_count
+           FROM societies s
+           LEFT JOIN faculty f ON f.id=s.advisor_faculty_id
+           ORDER BY s.id""").fetchall()
+    mine = {}
+    if student_id is not None:
+        mine = {m["society_id"]: m for m in db.execute(
+            "SELECT * FROM society_members WHERE student_id=?",
+            (student_id,)).fetchall()}
+    return [{"society": s, "member_count": s["member_count"],
+             "pending_count": s["pending_count"],
+             "mine": mine.get(s["id"])} for s in rows]
+
+
+def _society_or_none(db, society_id):
+    return db.execute("SELECT * FROM societies WHERE id=?",
+                      (society_id,)).fetchone()
+
+
+def _society_form_values(db, form):
+    adv = (form.get("advisor_faculty_id") or "").strip()
+    return {"name": (form.get("name") or "").strip(),
+            "description": (form.get("description") or "").strip(),
+            "advisor_faculty_id": int(adv) if adv.isdigit() else None,
+            "is_active": 1 if form.get("is_active") else 0}
+
+
+@app.route("/admin/campus", methods=["GET", "POST"])
+@role_required("admin")
+def admin_campus():
+    db = get_db()
+    if request.method == "POST":
+        values = {k: (request.form.get(k) or "").strip()
+                  for k in CAMPUS_SETTING_KEYS}
+        bad = [k for k in ("lms_url", "library_url", "email_url")
+               if not _is_valid_service_url(values[k])]
+        if bad:
+            flash("Service links must start with http:// or https:// "
+                  "(or be left blank) — check: "
+                  + ", ".join(bad) + ".", "error")
+            return render_template("admin_campus.html", values=values,
+                                   pending_societies=_pending_societies(db),
+                                   pending_vehicles=_pending_vehicles(db))
+        for k, v in values.items():
+            set_setting(db, k, v)
+        db.commit()
+        flash("Campus Life links & info saved.", "ok")
+        return redirect(url_for("admin_campus"))
+    return render_template("admin_campus.html", values=_campus_values(db),
+                           pending_societies=_pending_societies(db),
+                           pending_vehicles=_pending_vehicles(db))
+
+
+def _pending_societies(db):
+    return db.execute(
+        "SELECT COUNT(*) c FROM society_members WHERE status='Requested'"
+    ).fetchone()["c"]
+
+
+def _pending_vehicles(db):
+    return db.execute(
+        "SELECT COUNT(*) c FROM vehicle_passes WHERE status='Requested'"
+    ).fetchone()["c"]
+
+
+@app.route("/student/campus")
+@role_required("student")
+def student_campus():
+    db = get_db()
+    sid = session.get("student_id")
+    societies = [x for x in _campus_societies(db, sid)
+                 if x["society"]["is_active"]]
+    return render_template("student_campus.html", values=_campus_values(db),
+                           societies=societies)
+
+
+@app.route("/faculty/campus")
+@role_required("faculty")
+def faculty_campus():
+    db = get_db()
+    return render_template("faculty_campus.html", values=_campus_values(db))
+
+
+@app.route("/student/societies/<int:society_id>/join", methods=["POST"])
+@role_required("student")
+def student_society_join(society_id):
+    db = get_db()
+    soc = _society_or_none(db, society_id)
+    if not soc or not soc["is_active"]:
+        abort(404)
+    sid = session.get("student_id")
+    existing = db.execute(
+        "SELECT * FROM society_members WHERE society_id=? AND student_id=?",
+        (society_id, sid)).fetchone()
+    if existing:
+        if existing["status"] == "Rejected":
+            db.execute(
+                """UPDATE society_members SET status='Requested',
+                   decided_by=NULL, decided_at=NULL, created_at=?
+                   WHERE id=?""", (_now(), existing["id"]))
+            db.commit()
+            flash(f"Membership of {soc['name']} requested again — "
+                  "waiting for approval.", "ok")
+        else:
+            flash(f"You have already {'joined' if existing['status'] == 'Approved' else 'requested to join'} "
+                  f"{soc['name']}.", "error")
+        return redirect(url_for("student_campus"))
+    db.insert(
+        """INSERT INTO society_members (society_id,student_id,status,
+           created_at) VALUES (?,?,?,?)""",
+        (society_id, sid, "Requested", _now()))
+    db.commit()
+    flash(f"Membership of {soc['name']} requested — waiting for "
+          "approval.", "ok")
+    return redirect(url_for("student_campus"))
+
+
+@app.route("/admin/societies")
+@role_required("admin")
+def admin_societies():
+    db = get_db()
+    return render_template("admin_societies.html",
+                           societies=_campus_societies(db))
+
+
+@app.route("/admin/societies/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_society_new():
+    db = get_db()
+    faculty = db.execute("SELECT * FROM faculty ORDER BY full_name").fetchall()
+    if request.method == "POST":
+        v = _society_form_values(db, request.form)
+        if not v["name"]:
+            flash("Please give the society a name.", "error")
+            return render_template("society_form.html", society=v,
+                                   faculty=faculty, is_new=True)
+        db.insert(
+            """INSERT INTO societies (name,description,advisor_faculty_id,
+               is_active,created_at) VALUES (?,?,?,?,?)""",
+            (v["name"], v["description"] or None, v["advisor_faculty_id"],
+             v["is_active"], _now()))
+        db.commit()
+        flash("Society created.", "ok")
+        return redirect(url_for("admin_societies"))
+    return render_template("society_form.html", society={"is_active": 1},
+                           faculty=faculty, is_new=True)
+
+
+@app.route("/admin/societies/<int:society_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_society_edit(society_id):
+    db = get_db()
+    soc = _society_or_none(db, society_id)
+    if not soc:
+        abort(404)
+    faculty = db.execute("SELECT * FROM faculty ORDER BY full_name").fetchall()
+    if request.method == "POST":
+        v = _society_form_values(db, request.form)
+        if not v["name"]:
+            flash("Please give the society a name.", "error")
+            v["id"] = society_id
+            return render_template("society_form.html", society=v,
+                                   faculty=faculty, is_new=False)
+        db.execute(
+            """UPDATE societies SET name=?, description=?,
+               advisor_faculty_id=?, is_active=? WHERE id=?""",
+            (v["name"], v["description"] or None, v["advisor_faculty_id"],
+             v["is_active"], society_id))
+        db.commit()
+        flash("Society saved.", "ok")
+        return redirect(url_for("admin_societies"))
+    return render_template("society_form.html", society=soc,
+                           faculty=faculty, is_new=False)
+
+
+@app.route("/admin/societies/<int:society_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_society_delete(society_id):
+    db = get_db()
+    soc = _society_or_none(db, society_id)
+    if not soc:
+        abort(404)
+    members = db.execute(
+        "SELECT COUNT(*) c FROM society_members WHERE society_id=?",
+        (society_id,)).fetchone()["c"]
+    if members:
+        flash(f"Cannot delete {soc['name']}: it still has {members} "
+              "membership record(s). Remove the members first (or just "
+              "deactivate the society).", "error")
+        return redirect(url_for("admin_societies"))
+    db.execute("DELETE FROM societies WHERE id=?", (society_id,))
+    db.commit()
+    flash("Society deleted.", "ok")
+    return redirect(url_for("admin_societies"))
+
+
+@app.route("/admin/societies/<int:society_id>/members")
+@role_required("admin")
+def admin_society_members(society_id):
+    db = get_db()
+    soc = _society_or_none(db, society_id)
+    if not soc:
+        abort(404)
+    rows = db.execute(
+        """SELECT m.*, st.name student_name, st.registration_no
+           FROM society_members m
+           JOIN students st ON st.id=m.student_id
+           WHERE m.society_id=? ORDER BY m.id""", (society_id,)).fetchall()
+    pending = [r for r in rows if r["status"] == "Requested"]
+    decided = [r for r in rows if r["status"] != "Requested"]
+    return render_template("admin_society_members.html", society=soc,
+                           pending=pending, decided=decided)
+
+
+@app.route("/admin/societies/<int:society_id>/members/<int:member_id>/<action>",
+           methods=["POST"])
+@role_required("admin")
+def admin_society_member_decide(society_id, member_id, action):
+    db = get_db()
+    soc = _society_or_none(db, society_id)
+    member = db.execute(
+        "SELECT * FROM society_members WHERE id=? AND society_id=?",
+        (member_id, society_id)).fetchone()
+    if not soc or not member:
+        abort(404)
+    back = redirect(url_for("admin_society_members", society_id=society_id))
+    if action == "remove":
+        db.execute("DELETE FROM society_members WHERE id=?", (member_id,))
+        db.commit()
+        flash("Membership removed.", "ok")
+        return back
+    if action not in ("approve", "reject"):
+        abort(404)
+    if member["status"] != "Requested":
+        flash("That membership request has already been decided.",
+              "error")
+        return back
+    db.execute(
+        """UPDATE society_members SET status=?, decided_by=?, decided_at=?
+           WHERE id=?""",
+        ("Approved" if action == "approve" else "Rejected",
+         session.get("display_name"), _now(), member_id))
+    db.commit()
+    flash("Membership approved." if action == "approve"
+          else "Membership rejected.", "ok")
+    return back
+
+
+# ------------------------------------------------- v0.13 vehicle entry
+VEHICLE_TYPES = ("Motorcycle", "Car", "Other")
+
+
+def _norm_vehicle_no(raw):
+    return (raw or "").strip().upper()
+
+
+def _own_vehicle_or_none(db, pass_id):
+    return db.execute(
+        "SELECT * FROM vehicle_passes WHERE id=? AND student_id=?",
+        (pass_id, session.get("student_id"))).fetchone()
+
+
+@app.route("/student/vehicle")
+@role_required("student")
+def student_vehicle():
+    db = get_db()
+    passes = db.execute(
+        "SELECT * FROM vehicle_passes WHERE student_id=? ORDER BY id DESC",
+        (session.get("student_id"),)).fetchall()
+    return render_template("student_vehicle.html", passes=passes,
+                           vehicle_types=VEHICLE_TYPES)
+
+
+@app.route("/student/vehicle/apply", methods=["POST"])
+@role_required("student")
+def student_vehicle_apply():
+    db = get_db()
+    sid = session.get("student_id")
+    back = redirect(url_for("student_vehicle"))
+    vtype = (request.form.get("vehicle_type") or "").strip()
+    vno = _norm_vehicle_no(request.form.get("vehicle_no"))
+    make_model = (request.form.get("make_model") or "").strip()
+    color = (request.form.get("color") or "").strip()
+    if vtype not in VEHICLE_TYPES:
+        flash("Please choose a vehicle type.", "error")
+        return back
+    if not vno:
+        flash("Please enter the vehicle number (e.g. LEA-123).", "error")
+        return back
+    mine_live = db.execute(
+        """SELECT * FROM vehicle_passes WHERE student_id=?
+           AND UPPER(vehicle_no)=? AND status IN ('Requested','Approved')
+           ORDER BY id LIMIT 1""", (sid, vno)).fetchone()
+    if mine_live:
+        art = "an" if mine_live["status"] == "Approved" else "a"
+        flash(f"You already have {art} {mine_live['status'].lower()} "
+              f"pass for vehicle {vno}.", "error")
+        return back
+    other = db.execute(
+        """SELECT * FROM vehicle_passes WHERE UPPER(vehicle_no)=?
+           AND status='Approved' AND student_id<>? ORDER BY id LIMIT 1""",
+        (vno, sid)).fetchone()
+    if other:
+        flash(f"Vehicle {vno} already holds an approved entry pass for "
+              "another student — one vehicle, one pass. If this is your "
+              "vehicle, contact the admin office.", "error")
+        return back
+    db.insert(
+        """INSERT INTO vehicle_passes (student_id,vehicle_type,vehicle_no,
+           make_model,color,status,created_at) VALUES (?,?,?,?,?,?,?)""",
+        (sid, vtype, vno, make_model or None, color or None,
+         "Requested", _now()))
+    db.commit()
+    flash("Vehicle entry pass requested — waiting for admin approval.",
+          "ok")
+    return back
+
+
+@app.route("/admin/vehicle-passes")
+@role_required("admin")
+def admin_vehicle_passes():
+    db = get_db()
+    status = (request.args.get("status") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    sql = """SELECT vp.*, st.name student_name, st.registration_no
+             FROM vehicle_passes vp
+             JOIN students st ON st.id=vp.student_id WHERE 1=1"""
+    params = []
+    if status in ("Requested", "Approved", "Rejected"):
+        sql += " AND vp.status=?"
+        params.append(status)
+    if q:
+        # vehicle numbers are stored UPPER-case; match them
+        # case-insensitively on both backends (PG LIKE is sensitive,
+        # SQLite's is not), names / reg nos as elsewhere in the app.
+        sql += (" AND (UPPER(vp.vehicle_no) LIKE ? OR st.name LIKE ? "
+                "OR st.registration_no LIKE ?)")
+        params += [f"%{q.upper()}%", f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY (vp.status='Requested') DESC, vp.id DESC"
+    passes = db.execute(sql, params).fetchall()
+    counts = {r["status"]: r["c"] for r in db.execute(
+        "SELECT status, COUNT(*) c FROM vehicle_passes GROUP BY status"
+    ).fetchall()}
+    return render_template("admin_vehicle_passes.html", passes=passes,
+                           status=status, q=q, counts=counts)
+
+
+@app.route("/admin/vehicle-passes/<int:pass_id>/approve", methods=["POST"])
+@role_required("admin")
+def admin_vehicle_approve(pass_id):
+    db = get_db()
+    vp = db.execute("SELECT * FROM vehicle_passes WHERE id=?",
+                    (pass_id,)).fetchone()
+    if not vp:
+        abort(404)
+    back = redirect(url_for("admin_vehicle_passes"))
+    if vp["status"] != "Requested":
+        flash("That pass has already been decided.", "error")
+        return back
+    valid_till = (request.form.get("valid_till") or "").strip()
+    if valid_till:
+        try:
+            datetime.date.fromisoformat(valid_till)
+        except ValueError:
+            flash("Valid-till must be a valid date (YYYY-MM-DD).",
+                  "error")
+            return back
+    else:
+        today = datetime.date.today()
+        try:
+            valid_till = today.replace(year=today.year + 1).isoformat()
+        except ValueError:  # 29 Feb -> 28 Feb next year
+            valid_till = today.replace(year=today.year + 1,
+                                       day=28).isoformat()
+    pass_no = f"VEH-{datetime.date.today().year}-{pass_id}"
+    db.execute(
+        """UPDATE vehicle_passes SET status='Approved', pass_no=?,
+           valid_till=?, admin_remarks=?, decided_by=?, decided_at=?
+           WHERE id=?""",
+        (pass_no, valid_till,
+         (request.form.get("admin_remarks") or "").strip() or None,
+         session.get("display_name"), _now(), pass_id))
+    db.commit()
+    flash(f"Pass {pass_no} approved (valid till {valid_till}).", "ok")
+    return back
+
+
+@app.route("/admin/vehicle-passes/<int:pass_id>/reject", methods=["POST"])
+@role_required("admin")
+def admin_vehicle_reject(pass_id):
+    db = get_db()
+    vp = db.execute("SELECT * FROM vehicle_passes WHERE id=?",
+                    (pass_id,)).fetchone()
+    if not vp:
+        abort(404)
+    back = redirect(url_for("admin_vehicle_passes"))
+    if vp["status"] != "Requested":
+        flash("That pass has already been decided.", "error")
+        return back
+    remarks = (request.form.get("admin_remarks") or "").strip()
+    if not remarks:
+        flash("Remarks are required when rejecting — the student needs "
+              "to know why.", "error")
+        return back
+    db.execute(
+        """UPDATE vehicle_passes SET status='Rejected', admin_remarks=?,
+           decided_by=?, decided_at=? WHERE id=?""",
+        (remarks, session.get("display_name"), _now(), pass_id))
+    db.commit()
+    flash("Vehicle pass rejected.", "ok")
+    return back
+
+
+def build_vehicle_pass_pdf(db, pass_id):
+    """Vehicle entry pass PDF bytes — same card-on-A4 pattern (and the
+    same green style) as the student card: pass number, student +
+    vehicle identity, validity, and a Code39 barcode of the pass no."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas as pdfcanvas
+
+    vp = db.execute("SELECT * FROM vehicle_passes WHERE id=?",
+                    (pass_id,)).fetchone()
+    student = student_full(db, vp["student_id"])
+    buf = io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=A4)
+    page_w, page_h = A4
+    green = colors.HexColor("#0b6b3a")
+    dark = colors.HexColor("#175732")
+    grid = colors.HexColor("#b9d2c2")
+    card_w, card_h = 170 * mm, 170 * mm / 1.586
+    x0 = (page_w - card_w) / 2
+    y_top = page_h - 30 * mm
+    y0 = y_top - card_h
+
+    c.setStrokeColor(grid)
+    c.setDash(4, 3)
+    c.rect(x0 - 4 * mm, y0 - 4 * mm, card_w + 8 * mm, card_h + 8 * mm,
+           stroke=1, fill=0)
+    c.setDash()
+    c.setStrokeColor(green)
+    c.setLineWidth(1.4)
+    c.setFillColor(colors.white)
+    c.rect(x0, y0, card_w, card_h, stroke=1, fill=1)
+
+    band_h = 17 * mm
+    c.setFillColor(green)
+    c.rect(x0, y_top - band_h, card_w, band_h, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(x0 + 6 * mm, y_top - 8 * mm,
+                 "MY CUVAS — Campus Management System")
+    c.setFont("Helvetica", 8.5)
+    c.drawString(x0 + 6 * mm, y_top - 13.5 * mm,
+                 "Cholistan University of Veterinary and Animal Sciences")
+    c.setFillColor(dark)
+    c.setFont("Helvetica-Bold", 12.5)
+    c.drawCentredString(x0 + card_w / 2, y_top - band_h - 7 * mm,
+                        "VEHICLE ENTRY PASS")
+
+    fields = [("Pass No", vp["pass_no"]),
+              ("Student", student["name"] if student else "—"),
+              ("Registration No",
+               student["registration_no"] if student else "—"),
+              ("Vehicle Type", vp["vehicle_type"]),
+              ("Vehicle No", vp["vehicle_no"]),
+              ("Make / Model", vp["make_model"] or "—"),
+              ("Color", vp["color"] or "—"),
+              ("Valid Till", vp["valid_till"] or "—")]
+    fy = y_top - band_h - 16 * mm
+    for label, value in fields:
+        c.setFillColor(dark)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x0 + 6 * mm, fy, label)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica-Bold" if label in ("Pass No", "Vehicle No")
+                    else "Helvetica", 9)
+        c.drawString(x0 + 36 * mm, fy, str(value)[:52])
+        fy -= 6.2 * mm
+
+    pno = (vp["pass_no"] or "").upper()
+    try:
+        from reportlab.graphics.barcode import code39
+        barcode = code39.Standard39(pno, checksum=0, barHeight=11 * mm,
+                                    barWidth=0.42 * mm, gap=0.21 * mm)
+        barcode.drawOn(c, x0 + 6 * mm, y0 + 11 * mm)
+    except Exception:
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x0 + 6 * mm, y0 + 13 * mm, pno)
+    c.setFillColor(dark)
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.drawRightString(x0 + card_w - 6 * mm, y0 + 6 * mm,
+                      "Show at the campus gate on entry")
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 8)
+    c.drawString(x0, y0 - 12 * mm,
+                 f"Generated on {_now()} by MY CUVAS (Demo) — "
+                 f"system-generated pass, all data shown is fictional "
+                 f"demo data.")
+    c.showPage()
+    c.save()
+    buf.seek(0)  # AFTER save() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/vehicle/<int:pass_id>/pass.pdf")
+@role_required("student")
+def student_vehicle_pass_pdf(pass_id):
+    db = get_db()
+    vp = _own_vehicle_or_none(db, pass_id)
+    if not vp or vp["status"] != "Approved":
+        abort(404)
+    return send_file(io.BytesIO(build_vehicle_pass_pdf(db, pass_id)),
+                     as_attachment=True,
+                     download_name=f"vehicle-pass-{vp['pass_no']}.pdf",
+                     mimetype="application/pdf")
 
 
 if __name__ == "__main__":

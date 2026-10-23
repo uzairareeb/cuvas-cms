@@ -1,0 +1,25 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Student Societies</h2>
+<a class="btn green" href="{{ url_for('admin_society_new') }}">＋ Add Society</a></div>
+<p class="muted">Societies students can join from their Campus Life page. Only <strong>active</strong>
+societies are visible to students. A society can be deleted once it has no membership records.</p>
+
+<table>
+<tr><th>Society</th><th>Description</th><th>Advisor</th><th>Members</th><th>Pending</th><th>Status</th><th></th></tr>
+{% for item in societies %}{% set s = item.society %}
+<tr>
+<td><strong>{{ s.name }}</strong></td>
+<td>{{ s.description or '—' }}</td>
+<td>{{ s.advisor_name or '—' }}</td>
+<td>{{ item.member_count }}</td>
+<td>{{ item.pending_count }}</td>
+<td><span class="pill {{ 'paid' if s.is_active else 'pending' }}">{{ 'Active' if s.is_active else 'Inactive' }}</span></td>
+<td class="actions"><a class="btn small" href="{{ url_for('admin_society_members', society_id=s.id) }}">Members</a>
+<a class="btn small" href="{{ url_for('admin_society_edit', society_id=s.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_society_delete', society_id=s.id) }}" onsubmit="return confirm('Delete society {{ s.name }}? (Blocked while it has membership records.)');"><button class="btn small danger" type="submit">Delete</button></form></td>
+</tr>
+{% endfor %}
+</table>
+{% if not societies %}<p class="muted">No societies yet.</p>{% endif %}
+{% endblock %}

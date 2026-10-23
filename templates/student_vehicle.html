@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+<div class="toolbar"><h2>Vehicle Entry Pass</h2></div>
+<p class="muted">Apply for a campus vehicle entry pass. One vehicle can hold only one approved pass,
+and the same vehicle cannot be applied for twice while a request is pending.</p>
+
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">Apply for a Pass</h3>
+<form method="post" action="{{ url_for('student_vehicle_apply') }}" class="form-card">
+<label>Vehicle Type *</label>
+<select name="vehicle_type" required>
+<option value="">— Choose —</option>
+{% for t in vehicle_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+</select>
+<label>Vehicle Number * (e.g. LEA-123)</label><input name="vehicle_no" required placeholder="LEA-123">
+<label>Make / Model</label><input name="make_model" placeholder="e.g. Honda CG 125">
+<label>Color</label><input name="color" placeholder="e.g. Black">
+<div class="form-actions"><button class="btn green" type="submit">Request Pass</button></div>
+</form>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">My Vehicle Passes</h3>
+<table>
+<tr><th>Vehicle</th><th>Type</th><th>Make / Model</th><th>Color</th><th>Status</th><th>Pass No</th><th>Valid Till</th><th>Admin Remarks</th><th></th></tr>
+{% for p in passes %}
+<tr>
+<td><strong>{{ p.vehicle_no }}</strong></td>
+<td>{{ p.vehicle_type }}</td>
+<td>{{ p.make_model or '—' }}</td>
+<td>{{ p.color or '—' }}</td>
+<td><span class="pill {{ 'paid' if p.status == 'Approved' else ('pending' if p.status == 'Requested' else '') }}">{{ p.status }}</span></td>
+<td>{{ p.pass_no or '—' }}</td>
+<td>{{ p.valid_till or '—' }}</td>
+<td>{{ p.admin_remarks or '—' }}</td>
+<td>{% if p.status == 'Approved' %}<a class="btn small green" href="{{ url_for('student_vehicle_pass_pdf', pass_id=p.id) }}">⬇ Download Pass (PDF)</a>{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+{% if not passes %}<p class="muted">No vehicle pass applications yet.</p>{% endif %}
+</div>
+</div>
+{% endblock %}

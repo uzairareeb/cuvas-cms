@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+<div class="toolbar"><h2>Campus Life</h2></div>
+<p class="muted">University services — LMS, Library and your student Email — plus the student societies you can join.</p>
+
+{% include "_campus_cards.html" %}
+
+<div class="card">
+<h3 style="margin-top:0">🎭 Student Societies</h3>
+{% if not societies %}<p class="muted">No societies are open right now.</p>{% endif %}
+<table>
+<tr><th>Society</th><th>About</th><th>Advisor</th><th>Members</th><th>Your Status</th><th></th></tr>
+{% for item in societies %}{% set s = item.society %}{% set mine = item.mine %}
+<tr>
+<td><strong>{{ s.name }}</strong></td>
+<td>{{ s.description or '—' }}</td>
+<td>{{ item.society.advisor_name or '—' }}</td>
+<td>{{ item.member_count }}</td>
+<td>
+{% if mine and mine.status == 'Approved' %}<span class="pill paid">Member ✓</span>
+{% elif mine and mine.status == 'Requested' %}<span class="pill pending">Requested — awaiting approval</span>
+{% elif mine and mine.status == 'Rejected' %}<span class="pill" style="background:#fdecec;color:#8c1f1f">Rejected</span>
+{% else %}<span class="pill">Not a member</span>{% endif %}
+</td>
+<td class="actions">
+{% if not mine %}
+<form method="post" action="{{ url_for('student_society_join', society_id=s.id) }}"><button class="btn small green" type="submit">Join</button></form>
+{% elif mine.status == 'Rejected' %}
+<form method="post" action="{{ url_for('student_society_join', society_id=s.id) }}"><button class="btn small" type="submit">Request again</button></form>
+{% elif mine.status == 'Requested' %}
+<button class="btn small" type="button" disabled>Requested</button>
+{% endif %}
+</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+</div>
+{% endblock %}

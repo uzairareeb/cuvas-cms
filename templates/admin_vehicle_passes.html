@@ -1,0 +1,52 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Vehicle Entry Passes</h2></div>
+<p class="muted">Requests: <strong>{{ counts.get('Requested', 0) }}</strong> pending ·
+<strong>{{ counts.get('Approved', 0) }}</strong> approved · <strong>{{ counts.get('Rejected', 0) }}</strong> rejected.
+Approving stamps the pass number <code>VEH-&lt;year&gt;-&lt;id&gt;</code>; an approved vehicle number cannot be issued to another student.</p>
+
+<form method="get" class="toolbar">
+<select name="status">
+<option value="">All statuses</option>
+{% for s in ['Requested', 'Approved', 'Rejected'] %}<option value="{{ s }}" {{ 'selected' if status == s }}>{{ s }}</option>{% endfor %}
+</select>
+<input type="text" name="q" value="{{ q }}" placeholder="Search vehicle no / student / reg no">
+<button class="btn green" type="submit">Filter</button>
+{% if status or q %}<a class="btn ghost" href="{{ url_for('admin_vehicle_passes') }}">Clear</a>{% endif %}
+</form>
+
+<table>
+<tr><th>Student</th><th>Reg No</th><th>Vehicle</th><th>Type</th><th>Make / Model</th><th>Color</th><th>Requested On</th><th>Status</th><th>Pass No</th><th>Valid Till</th><th>Action</th></tr>
+{% for p in passes %}
+<tr>
+<td>{{ p.student_name }}</td>
+<td>{{ p.registration_no }}</td>
+<td><strong>{{ p.vehicle_no }}</strong></td>
+<td>{{ p.vehicle_type }}</td>
+<td>{{ p.make_model or '—' }}</td>
+<td>{{ p.color or '—' }}</td>
+<td>{{ p.created_at[:10] if p.created_at else '—' }}</td>
+<td><span class="pill {{ 'paid' if p.status == 'Approved' else ('pending' if p.status == 'Requested' else '') }}">{{ p.status }}</span>
+{% if p.admin_remarks %}<br><span class="muted">{{ p.admin_remarks }}</span>{% endif %}</td>
+<td>{{ p.pass_no or '—' }}</td>
+<td>{{ p.valid_till or '—' }}</td>
+<td>
+{% if p.status == 'Requested' %}
+<form method="post" action="{{ url_for('admin_vehicle_approve', pass_id=p.id) }}" class="form-card" style="margin-bottom:8px">
+<label>Valid Till (blank = 1 year)</label><input type="date" name="valid_till">
+<label>Remarks (optional)</label><input name="admin_remarks">
+<button class="btn small green" type="submit">Approve</button>
+</form>
+<form method="post" action="{{ url_for('admin_vehicle_reject', pass_id=p.id) }}">
+<input name="admin_remarks" placeholder="Reason (required)">
+<button class="btn small danger" type="submit">Reject</button>
+</form>
+{% else %}
+<span class="muted">Decided by {{ p.decided_by or '—' }}{% if p.decided_at %} on {{ p.decided_at[:10] }}{% endif %}</span>
+{% endif %}
+</td>
+</tr>
+{% endfor %}
+</table>
+{% if not passes %}<p class="muted">No vehicle pass applications match.</p>{% endif %}
+{% endblock %}

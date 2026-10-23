@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.12
+# MY CUVAS — Campus Management System (Demo) v0.13
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -29,7 +29,11 @@ with class/teacher/room clash checks; students get a web + PDF
 “My Time Table”, teachers a per-session teaching timetable) and
 transport (admin-managed bus routes with ordered stops; students
 browse active routes and search by stop name) — see the v0.12
-section below.
+section below. **Step 18 (v0.13)** adds Campus Life —
+admin-configured LMS / Library / Email service links shown to
+students and faculty, student societies with an admin-approved
+join flow, and vehicle entry passes with approval-stamped pass
+numbers and a printable pass PDF — see the v0.13 section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -146,6 +150,23 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
 - `/student/transport` — active routes with their stops in order and
   a stop-name search; linked by a **Transport** button in the Profile
   tab
+- `/admin/campus` — Campus Life settings: the five service values
+  (LMS URL, Library URL + info, Email URL + info) plus management
+  cards with pending societies / vehicle counts — see the Campus
+  Life section below
+- `/admin/societies` — society CRUD (name, description, advisor,
+  active toggle; delete blocked while membership rows exist) and
+  `/admin/societies/<id>/members` — approve / reject requests,
+  remove approved members
+- `/admin/vehicle-passes` — vehicle pass decisions (status filter
+  + search; approve stamps the pass number, reject needs remarks)
+- `/student/campus` — the service cards (LMS / Library / Email)
+  and the societies join flow; linked by a **Campus Life** button
+  in the Profile tab
+- `/student/vehicle` — vehicle entry applications + “My Vehicle
+  Passes”, and `/student/vehicle/<id>/pass.pdf` — the printable
+  pass; linked by a **Vehicle Entry** button in the Profile tab
+- `/faculty/campus` — the same three service cards for faculty
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -580,6 +601,79 @@ pickup time, sort order).
   07:15, University Chowk 07:35, Main Gate 07:55, CUVAS Campus
   08:10). All of it is fictional demo data, editable by the admin.
 
+## Campus Life (Step 18, v0.13)
+
+Three new tables ship with the boot DDL (plain `INTEGER` ids, so
+the older migration simulations stay safe on PostgreSQL):
+`societies` (name, description, advisor faculty id, active flag),
+`society_members` (society + student, `Requested` / `Approved` /
+`Rejected`, decider + decision time; `UNIQUE(society_id,
+student_id)`), and `vehicle_passes` (student, vehicle type +
+number + make/model + colour, status, pass number, valid-till
+date, admin remarks + decider stamps). `backfill_v13` seeds the
+five campus settings keys (`lms_url`, `library_url`,
+`library_info`, `email_url`, `email_info` — all `''`) **only when
+absent** and three demo societies **only while the societies table
+is empty**, so admin changes are never overwritten.
+
+**Service links (LMS / Library / Email).** The values live in the
+existing `app_settings` store (Step 15). **Admin → Campus Life**
+(`/admin/campus`, one sidebar link) edits them: URLs must start
+with `http://` or `https://` when non-empty, otherwise nothing is
+saved and a friendly error shows; the page also carries management
+cards for Societies and Vehicle Passes with their pending-request
+counts. **Students** (`/student/campus`, **Campus Life** button in
+the Profile tab) and **faculty** (`/faculty/campus`, link in the
+faculty shell) see the same three cards from one shared partial:
+LMS shows an **Open LMS** button only when a URL is set (otherwise
+“Not configured yet”), the Library card shows the info text plus
+an **Open Library / OPAC** button when set, and the Email card
+the info text plus an **Open Email** button when set.
+
+**Societies.** The student page lists every **active** society
+with its description, advisor name (when set), approved-member
+count and the student's own state: **Join** (POST), a disabled
+“Requested — awaiting approval”, **Member ✓**, or — after a
+rejection — **Request again**, which flips the *same* membership
+row back to `Requested` and clears the decision stamp (the
+`UNIQUE` pair makes a second row impossible, so a duplicate join
+is refused with a friendly message). Joining has no other
+conditions. Inactive societies are hidden from students (joining
+one is a 404). **Admin → Societies** is full CRUD (advisor chosen
+from the faculty list, active toggle); following the app-wide
+pattern, **delete is blocked while membership rows exist**, with
+the reason shown. `/admin/societies/<id>/members` lists pending
+requests (Approve / Reject, stamping decider + time) and approved
+members (Remove deletes the row); decided rows refuse re-deciding.
+Pending counts appear on the societies list and on `/admin/campus`.
+Seed (only-when-empty): *Literary Society*, *Sports Society* and
+*IT & Robotics Society* — the IT society's advisor is the seeded
+Demo Teacher (looked up by the demo email; `NULL` when absent).
+
+**Vehicle entry.** **Students** apply on `/student/vehicle`
+(**Vehicle Entry** button in the Profile tab): type (`Motorcycle`
+/ `Car` / `Other`), vehicle number (normalised to trimmed
+UPPER-case), make/model and colour. Rules, all enforced
+server-side: a student may hold several vehicles, but the **same
+vehicle number cannot have a second `Requested`/`Approved` pass
+for the same student**, and a number with an **`Approved` pass
+for another student is refused** — one vehicle, one pass (a
+number that is merely `Requested` by someone else may still be
+requested). “My Vehicle Passes” shows status pills, admin remarks
+on rejections, and — once approved — a **Download Pass (PDF)**
+button. **Admin → Vehicle Passes** lists every application
+(pending first) with a status filter and a search over vehicle
+number (case-insensitive on both backends) / student name /
+registration number. **Approve** takes an optional valid-till
+date (empty = today + 1 year) and stamps `pass_no` =
+`VEH-<year>-<id>` plus the decider; **Reject** requires remarks.
+Decided passes cannot be re-decided. The pass PDF
+(`/student/vehicle/<id>/pass.pdf`, own + `Approved` only, else
+404) uses the shared green PDF style: a card on A4 with the
+university header, “VEHICLE ENTRY PASS”, pass number, student
+name + registration number, vehicle details, valid-till and a
+Code39 barcode of the pass number.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -763,8 +857,50 @@ dropping the three tables from a booted database and booting
 again (tables recreated, demo routes re-seeded, demo students
 intact).
 
-## Not in v0.12
+`verify_v13.py` adds a 60-check pass for the Campus Life step
+(role guards in all directions on the new campus / societies /
+vehicle pages for anonymous, admin, faculty and student clients;
+the three demo societies seeded exactly once with the IT society
+advised by the Demo Teacher and the other advisors `NULL`; the
+five campus settings keys seeded empty and never overwritten on a
+re-boot; a non-`http(s)` URL refused with nothing saved; the
+settings round-trip — saved URLs/info appear as buttons/text on
+BOTH the student and faculty campus pages, and clearing the LMS
+URL restores the “Not configured yet” note; the student dashboard
+still has exactly 10 tabs with byte-identical labels plus the two
+new Profile buttons; society join → `Requested` row, duplicate
+join blocked (still one row), admin approve stamps decider +
+time and the student sees **Member ✓** with the count at 1,
+re-deciding refused; reject → the student's re-request reuses the
+SAME row with the stamp cleared; society delete blocked while
+member rows exist and allowed when memberless; an inactive
+society is hidden from students but visible to the admin, with
+join attempts a 404; admin Remove deletes a membership row;
+vehicle apply with the number normalised to UPPER-case; pass PDF
+a 404 before approval; same student + same number refused while
+`Requested` AND while `Approved`; an invalid vehicle type
+refused; another student MAY request a number that is only
+`Requested` elsewhere, but a THIRD student is refused once it is
+`Approved` (one vehicle, one pass); approval stamps
+`pass_no = VEH-<year>-<id>` and `valid_till` = today + 1 year
+(leap-aware); the pass PDF is `%PDF` and its decoded streams
+contain the pass number, the vehicle number and “VEHICLE ENTRY
+PASS”; the PDF is a 404 for another student and for a pass id
+that does not exist; a decided pass refuses re-approve and
+re-reject; reject without remarks is refused, and with remarks
+the student sees them and may apply again; the admin list search
+matches the vehicle number case-insensitively and the
+`Approved` status filter hides requested rows). v0.13 result:
+**all eleven suites ALL PASS on both backends** (SQLite and
+PostgreSQL identical: 43 + 52 + 60 + 72 + 64 + 52 + 59 + 52 +
+64 + 51 + 60 = 629 checks). Migration note: v0.13 adds three
+tables via the boot DDL plus the guarded `backfill_v13` (settings
+keys only when absent, societies only while the table is empty),
+so a v0.12 database boots into v0.13 with its data untouched and
+a second boot is a strict no-op.
+
+## Not in v0.13
 
 Posting an approved scholarship award to the fee ledger / vouchers,
-surveys, dept/accounts/COE portals — the rest of Phase 2
-(see `../architecture.md`).
+surveys (deferred by the user), dept/accounts/COE portals — the
+rest of Phase 3 (see `../architecture.md`).

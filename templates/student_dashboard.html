@@ -32,6 +32,8 @@
 <p><a class="btn green" href="{{ url_for('student_card_pdf') }}">⬇ Download Student Card (PDF)</a></p>
 <p><a class="btn" href="{{ url_for('student_clearance') }}">✅ My Clearance</a></p>
 <p><a class="btn" href="{{ url_for('student_transport') }}">🚌 Transport</a></p>
+<p><a class="btn" href="{{ url_for('student_campus') }}">🌐 Campus Life</a></p>
+<p><a class="btn" href="{{ url_for('student_vehicle') }}">🚗 Vehicle Entry</a></p>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
 <tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>

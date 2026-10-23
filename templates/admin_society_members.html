@@ -1,0 +1,40 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<p><a href="{{ url_for('admin_societies') }}">← Back to Societies</a></p>
+<div class="toolbar"><h2>{{ society.name }} — Membership</h2></div>
+
+<h3>Pending Requests ({{ pending|length }})</h3>
+<table>
+<tr><th>Student</th><th>Registration No</th><th>Requested On</th><th></th></tr>
+{% for m in pending %}
+<tr>
+<td>{{ m.student_name }}</td>
+<td>{{ m.registration_no }}</td>
+<td>{{ m.created_at[:10] if m.created_at else '—' }}</td>
+<td class="actions">
+<form method="post" action="{{ url_for('admin_society_member_decide', society_id=society.id, member_id=m.id, action='approve') }}"><button class="btn small green" type="submit">Approve</button></form>
+<form method="post" action="{{ url_for('admin_society_member_decide', society_id=society.id, member_id=m.id, action='reject') }}"><button class="btn small danger" type="submit">Reject</button></form>
+</td>
+</tr>
+{% endfor %}
+</table>
+{% if not pending %}<p class="muted">No pending requests.</p>{% endif %}
+
+<h3>Decided ({{ decided|length }})</h3>
+<table>
+<tr><th>Student</th><th>Registration No</th><th>Status</th><th>Decided By</th><th>Decided On</th><th></th></tr>
+{% for m in decided %}
+<tr>
+<td>{{ m.student_name }}</td>
+<td>{{ m.registration_no }}</td>
+<td><span class="pill {{ 'paid' if m.status == 'Approved' else 'pending' }}">{{ m.status }}</span></td>
+<td>{{ m.decided_by or '—' }}</td>
+<td>{{ m.decided_at[:10] if m.decided_at else '—' }}</td>
+<td class="actions">
+<form method="post" action="{{ url_for('admin_society_member_decide', society_id=society.id, member_id=m.id, action='remove') }}" onsubmit="return confirm('Remove this membership record?');"><button class="btn small danger" type="submit">Remove</button></form>
+</td>
+</tr>
+{% endfor %}
+</table>
+{% if not decided %}<p class="muted">No decided memberships yet.</p>{% endif %}
+{% endblock %}

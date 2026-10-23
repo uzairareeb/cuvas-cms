@@ -1,0 +1,36 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Campus Life — Service Links &amp; Info</h2></div>
+<p class="muted">The LMS, Library and student Email links/info below appear on the student and
+faculty <strong>Campus Life</strong> pages. Leave a link blank to show “Not configured yet” instead of a button.
+Links must start with <code>http://</code> or <code>https://</code>.</p>
+
+<form method="post" class="form-card">
+<h3 style="margin-top:0">🖥 LMS</h3>
+<label>LMS Link (e.g. https://lms.example.edu.pk)</label>
+<input name="lms_url" value="{{ values.lms_url }}" placeholder="https://…">
+
+<h3>📚 Library</h3>
+<label>Library / OPAC Link</label>
+<input name="library_url" value="{{ values.library_url }}" placeholder="https://…">
+<label>Library Info (timings, membership notes…)</label>
+<textarea name="library_info" rows="3" placeholder="e.g. Open Mon–Sat, 8am–8pm. Membership is free for enrolled students.">{{ values.library_info }}</textarea>
+
+<h3>✉ Student Email</h3>
+<label>Email / Webmail Link</label>
+<input name="email_url" value="{{ values.email_url }}" placeholder="https://…">
+<label>Email Info (how students get / recover their account…)</label>
+<textarea name="email_info" rows="3" placeholder="e.g. Your email is firstname.regno@students.example.edu.pk — visit IT helpdesk to reset the password.">{{ values.email_info }}</textarea>
+
+<div class="form-actions"><button class="btn green" type="submit">Save Campus Life Settings</button></div>
+</form>
+
+<div class="grid" style="margin-top:16px">
+<div class="card"><h3 style="margin-top:0">🎭 Societies</h3>
+<p class="muted">{{ pending_societies }} membership request(s) waiting for a decision.</p>
+<p><a class="btn" href="{{ url_for('admin_societies') }}">Manage Societies</a></p></div>
+<div class="card"><h3 style="margin-top:0">🚗 Vehicle Entry Passes</h3>
+<p class="muted">{{ pending_vehicles }} pass request(s) waiting for a decision.</p>
+<p><a class="btn" href="{{ url_for('admin_vehicle_passes') }}">Review Vehicle Passes</a></p></div>
+</div>
+{% endblock %}

@@ -1,0 +1,32 @@
+{# Shared Campus Life service cards (LMS / Library / Email) — rendered
+   identically on the student and faculty Campus Life pages. Expects
+   `values` = the five app_settings campus keys. #}
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">🖥 Learning Management System (LMS)</h3>
+<p class="muted">Course material, lecture slides and online classes live on the university LMS.</p>
+{% if values.lms_url %}
+<p><a class="btn green" href="{{ values.lms_url }}" target="_blank" rel="noopener">Open LMS ↗</a></p>
+{% else %}
+<p class="muted">Not configured yet — the admin has not set the LMS link.</p>
+{% endif %}
+</div>
+
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">📚 Library</h3>
+{% if values.library_info %}<p style="white-space:pre-line">{{ values.library_info }}</p>{% endif %}
+{% if values.library_url %}
+<p><a class="btn green" href="{{ values.library_url }}" target="_blank" rel="noopener">Open Library / OPAC ↗</a></p>
+{% elif not values.library_info %}
+<p class="muted">Not configured yet — the admin has not set the library link or info.</p>
+{% endif %}
+</div>
+
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">✉ Student Email</h3>
+{% if values.email_info %}<p style="white-space:pre-line">{{ values.email_info }}</p>{% endif %}
+{% if values.email_url %}
+<p><a class="btn green" href="{{ values.email_url }}" target="_blank" rel="noopener">Open Email ↗</a></p>
+{% elif not values.email_info %}
+<p class="muted">Not configured yet — the admin has not set the email link or info.</p>
+{% endif %}
+</div>

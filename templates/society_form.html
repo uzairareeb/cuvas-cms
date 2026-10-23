@@ -1,0 +1,14 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Society' if not is_new else 'Add Society' }}</h2>
+<form method="post" class="form-card">
+<label>Society Name *</label><input name="name" required value="{{ society.name if society.name else '' }}">
+<label>Description</label><textarea name="description" rows="3">{{ society.description if society.description else '' }}</textarea>
+<label>Advisor (faculty, optional)</label>
+<select name="advisor_faculty_id">
+<option value="">— No advisor —</option>
+{% for f in faculty %}<option value="{{ f.id }}" {{ 'selected' if society.advisor_faculty_id == f.id }}>{{ f.full_name }}{% if f.designation %} ({{ f.designation }}){% endif %}</option>{% endfor %}
+</select>
+<label class="check"><input type="checkbox" name="is_active" value="1" {{ 'checked' if society.is_active else '' }}> Active (visible to students)</label>
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if not is_new else 'Add Society' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_societies') }}">Cancel</a></div></form>
+{% endblock %}
