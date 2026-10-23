@@ -1,8 +1,7 @@
 {% extends "base.html" %}
-{% block body %}<div class="login-box"><div class="login-lockup"><span class="logo-box">CUVAS</span><div class="logo-sub">Cholistan University of Veterinary<br>and Animal Sciences, Bahawalpur</div></div>
-<h2>Sign in to MY CUVAS</h2>
+{% block body %}<div class="login-box"><h2>Sign in to MY CUVAS</h2>
 <form method="post"><label>Username</label><input name="username" required autofocus>
 <label>Password</label><input name="password" type="password" required>
-<button class="btn green" style="width:100%;justify-content:center" type="submit">Login</button></form>
+<button class="btn green" style="width:100%" type="submit">Login</button></form>
 <div class="demo-note"><strong>Demo credentials:</strong><br>Admin: <code>admin</code> / <code>Admin@123</code><br>Student: <code>student</code> / <code>Student@123</code></div>
 </div>{% endblock %}

@@ -620,14 +620,8 @@ def admin_dashboard():
            LEFT JOIN programs p ON p.id=s.program_id ORDER BY s.id DESC LIMIT 6""").fetchall()
     pending = db.execute(
         "SELECT v.*, s.name student_name FROM vouchers v JOIN students s ON s.id=v.student_id WHERE v.status IN ('Pending','Proof Submitted') ORDER BY v.id DESC").fetchall()
-    courses_by_program = db.execute(
-        """SELECT p.name prog, COUNT(c.id) cnt FROM programs p
-           LEFT JOIN courses c ON c.program_id=p.id
-           GROUP BY p.id, p.name ORDER BY cnt DESC, p.name""").fetchall()
-    cp_max = max([r["cnt"] for r in courses_by_program] or [1])
     return render_template("admin_dashboard.html", kpis=kpis,
-                           recent_students=recent_students, pending=pending,
-                           courses_by_program=courses_by_program, cp_max=cp_max)
+                           recent_students=recent_students, pending=pending)
 
 
 # ---------------------------------------------------------------- helpers: admin CRUD
@@ -1606,12 +1600,10 @@ def build_challan_pdf(db, v):
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16 * mm, bottomMargin=14 * mm,
                             leftMargin=16 * mm, rightMargin=16 * mm,
                             title=f"Fee Challan {v['challan_no']}")
-    story = [Paragraph('<font color="#102B50">MY CUVAS — Campus Management System</font>',
-                       styles["Title"]),
-             Paragraph('<font color="#2563EB">Cholistan University of Veterinary '
-                       'and Animal Sciences</font>', styles["Heading3"]),
-             Paragraph('<font color="#102B50">FEE CHALLAN / VOUCHER</font>',
-                       styles["Heading2"]), Spacer(1, 4 * mm)]
+    story = [Paragraph("MY CUVAS — Campus Management System", styles["Title"]),
+             Paragraph("Cholistan University of Veterinary and Animal Sciences",
+                       styles["Heading3"]),
+             Paragraph("FEE CHALLAN / VOUCHER", styles["Heading2"]), Spacer(1, 4 * mm)]
     info = [["Student Name", student["name"] if student else "—",
              "Challan No.", v["challan_no"] or "—"],
             ["Registration No.", student["registration_no"] if student else "—",
@@ -1622,9 +1614,9 @@ def build_challan_pdf(db, v):
              "Semester", str(v.get("semester_no") or (student["current_semester"] if student else "—"))],
             ["Voucher Title", v["title"] or "—", "Kind", (v.get("kind") or "semester").title()]]
     t = Table(info, colWidths=[32 * mm, 52 * mm, 26 * mm, 58 * mm])
-    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DCE7F5")),
-                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F6FD")),
-                           ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F1F6FD")),
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b9d2c2")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eaf5ee")),
+                           ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#eaf5ee")),
                            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
     story += [t, Spacer(1, 5 * mm)]
@@ -1634,10 +1626,10 @@ def build_challan_pdf(db, v):
         rows.append([str(i), label, f"{amt:,}"])
     rows.append(["", "TOTAL PAYABLE", f"{v['amount'] or 0:,}"])
     lt = Table(rows, colWidths=[10 * mm, 108 * mm, 50 * mm])
-    lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DCE7F5")),
-                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F6FD")),
-                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#102B50")),
-                            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F1F6FD")),
+    lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b9d2c2")),
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b6b3a")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eaf5ee")),
                             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                             ("FONTSIZE", (0, 0), (-1, -1), 9),
                             ("ALIGN", (2, 0), (2, -1), "RIGHT")]))
@@ -2680,12 +2672,10 @@ def student_full(db, student_id):
 def _pdf_header(styles, title_text):
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.units import mm
-    return [Paragraph('<font color="#102B50">MY CUVAS — Campus Management System</font>',
-                      styles["Title"]),
-            Paragraph('<font color="#2563EB">Cholistan University of Veterinary '
-                      'and Animal Sciences</font>', styles["Heading3"]),
-            Paragraph(f'<font color="#102B50">{title_text}</font>', styles["Heading2"]),
-            Spacer(1, 4 * mm)]
+    return [Paragraph("MY CUVAS — Campus Management System", styles["Title"]),
+            Paragraph("Cholistan University of Veterinary and Animal Sciences",
+                      styles["Heading3"]),
+            Paragraph(title_text, styles["Heading2"]), Spacer(1, 4 * mm)]
 
 
 def build_transcript_pdf(db, student_id):
@@ -2706,10 +2696,9 @@ def build_transcript_pdf(db, student_id):
                             leftMargin=14 * mm, rightMargin=14 * mm,
                             title=f"Transcript {student['registration_no']}")
     story = _pdf_header(styles, "OFFICIAL TRANSCRIPT (Demo)")
-    header = colors.HexColor("#F1F6FD")
-    header_text = colors.HexColor("#102B50")
-    grid = colors.HexColor("#DCE7F5")
-    light = colors.HexColor("#F1F6FD")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
+    light = colors.HexColor("#eaf5ee")
     info = [["Student Name", student["name"], "Registration No.", student["registration_no"]],
             ["Program", student["prog_name"] or "—", "Department", student["dept_name"] or "—"],
             ["Session", student["sess_name"] or student.get("session_name") or "—",
@@ -2736,8 +2725,8 @@ def build_transcript_pdf(db, student_id):
         rows.append(["", f"Semester SGPA", "", "", "", "", f"{block['sgpa']:.2f}"])
         lt = Table(rows, colWidths=[16 * mm, 74 * mm, 14 * mm, 16 * mm, 14 * mm, 22 * mm, 26 * mm])
         lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
-                                ("BACKGROUND", (0, 0), (-1, 0), header),
-                                ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
+                                ("BACKGROUND", (0, 0), (-1, 0), green),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                                 ("BACKGROUND", (0, -1), (-1, -1), light),
                                 ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                                 ("FONTSIZE", (0, 0), (-1, -1), 8),
@@ -2812,10 +2801,8 @@ def build_slips_pdf(db, student_semesters):
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
                             leftMargin=14 * mm, rightMargin=14 * mm,
                             title="Roll Number Slips")
-    header = colors.HexColor("#F1F6FD")
-    header_text = colors.HexColor("#102B50")
-    accent = colors.HexColor("#2563EB")
-    grid = colors.HexColor("#DCE7F5")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
     story = []
     for i, (student, semester_no) in enumerate(student_semesters):
         if i:
@@ -2823,7 +2810,7 @@ def build_slips_pdf(db, student_semesters):
         story += _pdf_header(styles, "ROLL NUMBER SLIP — Semester Examination")
         photo = Table([[Paragraph("<br/><br/>STUDENT<br/>PHOTO", styles["BodyText"])]],
                       colWidths=[30 * mm], rowHeights=[36 * mm])
-        photo.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, accent),
+        photo.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, green),
                                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
         info = [["Student Name", student["name"]],
@@ -2834,7 +2821,7 @@ def build_slips_pdf(db, student_semesters):
                 ["Semester", str(semester_no)]]
         it = Table(info, colWidths=[42 * mm, 100 * mm])
         it.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
-                                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F6FD")),
+                                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eaf5ee")),
                                 ("FONTSIZE", (0, 0), (-1, -1), 9),
                                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
         combo = Table([[photo, it]], colWidths=[36 * mm, 146 * mm])
@@ -2851,8 +2838,8 @@ def build_slips_pdf(db, student_semesters):
             rows.append(["", "—", "No courses found for this semester", ""])
         ct = Table(rows, colWidths=[10 * mm, 28 * mm, 104 * mm, 40 * mm])
         ct.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
-                                ("BACKGROUND", (0, 0), (-1, 0), header),
-                                ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
+                                ("BACKGROUND", (0, 0), (-1, 0), green),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                                 ("FONTSIZE", (0, 0), (-1, -1), 9)]))
         story += [ct, Spacer(1, 6 * mm),
                   Paragraph("<b>Instructions:</b>", styles["BodyText"]),

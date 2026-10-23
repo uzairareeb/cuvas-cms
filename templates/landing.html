@@ -1,10 +1,9 @@
 {% extends "base.html" %}
 {% block body %}
-<section class="hero"><span class="hero-box">CUVAS</span><div class="hero-sub">Cholistan University of Veterinary and Animal Sciences, Bahawalpur</div>
-<h1>MY CUVAS — Campus Management System (Demo)</h1>
+<section class="hero"><h1>MY CUVAS — Campus Management System (Demo)</h1>
 <p>One portal for students, faculty and administration — admissions, enrollments, fee vouchers, transcripts and accounts, all in one place. This demo build uses fictional data only.</p>
 <a class="btn" href="{{ url_for('login') }}">Login to Portal</a></section>
-<div class="wrap"><h2>Latest Announcements</h2><div class="grid" style="margin-top:14px">
+<div class="wrap"><h2>Latest Announcements</h2><div class="grid">
 {% for n in news %}<div class="card"><h3>{{ n.title }}</h3><p>{{ n.body }}</p><p class="muted">{{ n.published_at }}</p></div>{% endfor %}
 </div>
 <div class="demo-note"><strong>Demo accounts:</strong> Admin — <code>admin / Admin@123</code> · Student — <code>student / Student@123</code> (demo-only, fictional).</div>
