@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.6
+MY CUVAS — Campus Management System (Demo) v0.7
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -21,6 +21,13 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      notifications table, extended additively), an official document
      repository (repository_docs, blobs), and a student card PDF with a
      Code39 barcode of the registration number.
+ 11. v0.7 faculty portal — faculty records with auto-created logins
+     (users.faculty_id, role 'faculty'), course assignments (one primary
+     teacher per course+session), and a /faculty portal where a teacher
+     sees only their own courses, the class roster (+ Excel export) and a
+     marks sheet that writes into the same results store as the admin
+     sheet. Faculty can never publish; once the admin publishes a set,
+     the faculty sheet locks read-only.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -226,11 +233,24 @@ DDL = [
         file_name TEXT, file_mime TEXT,
         file_data {"BYTEA" if PG else "BLOB"},
         uploaded_by TEXT, created_at TEXT, is_published INTEGER DEFAULT 1)""",
+    # --- v0.7 faculty (new tables only) ---
+    f"""CREATE TABLE IF NOT EXISTS faculty (
+        id {_PK}, full_name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+        phone TEXT, designation TEXT,
+        department_id INTEGER REFERENCES departments(id),
+        is_active INTEGER DEFAULT 1, created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS course_assignments (
+        id {_PK}, faculty_id INTEGER REFERENCES faculty(id),
+        course_id INTEGER REFERENCES courses(id),
+        session_id INTEGER REFERENCES academic_sessions(id),
+        created_at TEXT, UNIQUE(faculty_id, course_id, session_id))""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
 EXTRA_COLUMNS = {
-    "users": [("is_active", "INTEGER DEFAULT 1")],
+    "users": [("is_active", "INTEGER DEFAULT 1"),
+              # --- v0.7: links a faculty login to its faculty record ---
+              ("faculty_id", "INTEGER")],
     "students": [("cnic", "TEXT"), ("domicile", "TEXT"), ("blood_group", "TEXT"),
                  ("address_present", "TEXT"), ("address_permanent", "TEXT"),
                  ("session_id", "INTEGER")],
@@ -280,6 +300,7 @@ def init_db():
     backfill_v03(db)
     backfill_v04(db)
     backfill_v06(db)
+    backfill_v07(db)
     db.commit()
     db.conn.close()
 
@@ -427,6 +448,50 @@ def backfill_v06(db):
     db.execute(
         """UPDATE notifications SET created_at=published_at
            WHERE created_at IS NULL AND published_at IS NOT NULL""")
+
+
+# ------------------------------------------------------- v0.7 faculty backfill
+def backfill_v07(db):
+    """Idempotent v0.7 migration: seed ONE fictional demo teacher (with the
+    'faculty' demo login) and assign them two of the demo student's current
+    courses in the demo student's own session, so the faculty roster is
+    non-empty out of the box. Guarded on the faculty table being empty —
+    a strict no-op once any faculty exist, and it never touches results,
+    so the seeded demo transcript (CGPA 3.63) is unaffected."""
+    if db.execute("SELECT COUNT(*) c FROM faculty").fetchone()["c"]:
+        return
+    demo = db.execute(
+        "SELECT * FROM students WHERE registration_no='CUVAS-DEMO-2026-001'").fetchone()
+    if not demo:
+        return
+    fid = db.insert(
+        """INSERT INTO faculty (full_name,email,phone,designation,department_id,
+           is_active,created_at) VALUES (?,?,?,?,?,?,?)""",
+        ("Demo Teacher", "demo.teacher@cuvas.edu.pk", "0300-0000100",
+         "Lecturer", demo.get("department_id"), 1, _now()))
+    login_row = db.execute("SELECT * FROM users WHERE username='faculty'").fetchone()
+    if login_row is None:
+        db.insert(
+            """INSERT INTO users (username,password_hash,role,display_name,faculty_id)
+               VALUES (?,?,?,?,?)""",
+            ("faculty", generate_password_hash("Faculty@123"), "faculty",
+             "Demo Teacher", fid))
+    elif not login_row.get("faculty_id"):
+        # repair a half-migrated demo login: link it to the fresh record
+        db.execute(
+            "UPDATE users SET role='faculty', display_name='Demo Teacher', "
+            "password_hash=?, faculty_id=? WHERE id=?",
+            (generate_password_hash("Faculty@123"), fid, login_row["id"]))
+    if demo.get("program_id") and demo.get("session_id"):
+        courses = db.execute(
+            "SELECT id FROM courses WHERE program_id=? AND semester_no=? "
+            "ORDER BY code LIMIT 2",
+            (demo["program_id"], demo.get("current_semester") or 3)).fetchall()
+        for c in courses:
+            db.insert(
+                """INSERT INTO course_assignments (faculty_id,course_id,session_id,
+                   created_at) VALUES (?,?,?,?)""",
+                (fid, c["id"], demo["session_id"], _now()))
 
 
 def _today():
@@ -616,7 +681,9 @@ def role_required(role):
 
 
 def home_for_role():
-    return "admin_dashboard" if session.get("role") == "admin" else "student_dashboard"
+    return {"admin": "admin_dashboard",
+            "faculty": "faculty_dashboard"}.get(session.get("role"),
+                                                "student_dashboard")
 
 
 # ---------------------------------------------------------------- routes: public / auth
@@ -635,11 +702,22 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        user = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-        if user and user.get("is_active", 1) and check_password_hash(user["password_hash"], password):
+        db = get_db()
+        user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        ok = bool(user and user.get("is_active", 1)
+                  and check_password_hash(user["password_hash"], password))
+        if ok and user["role"] == "faculty":
+            # a deactivated faculty record blocks login even if the users
+            # row's own flag ever drifts out of sync
+            fac = db.execute("SELECT is_active FROM faculty WHERE id=?",
+                             (user.get("faculty_id"),)).fetchone()
+            ok = bool(fac and fac.get("is_active", 1))
+        if ok:
             session.clear()
             session.update(user_id=user["id"], role=user["role"],
-                           display_name=user["display_name"], student_id=user["student_id"])
+                           display_name=user["display_name"],
+                           student_id=user["student_id"],
+                           faculty_id=user.get("faculty_id"))
             return redirect(url_for(home_for_role()))
         flash("Invalid username or password.", "error")
     return render_template("login.html")
@@ -1318,6 +1396,271 @@ def admin_student_reset_password(student_id):
     flash(f"Password reset for {student['registration_no']} ({student['name']}). "
           f"New password: {pw} — shown ONCE, note it now.", "ok")
     return redirect(url_for("admin_students"))
+
+
+# ---------------------------------------------------------------- faculty management (v0.7)
+FACULTY_DESIGNATIONS = ["Professor", "Associate Professor",
+                        "Assistant Professor", "Lecturer"]
+
+
+def create_faculty(db, data, password=None):
+    """Insert a faculty record + their login (username = email).
+    Returns (faculty_id, initial_password). Raises ValueError on duplicates.
+    Does NOT commit — the caller commits."""
+    name = (data.get("full_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    if not name:
+        raise ValueError("Full name is missing")
+    if not email:
+        raise ValueError("Email is missing")
+    if "@" not in email:
+        raise ValueError(f"Email '{email}' does not look valid")
+    if db.execute("SELECT id FROM faculty WHERE email=?", (email,)).fetchone():
+        raise ValueError(f"Email '{email}' is already registered to another faculty member")
+    if db.execute("SELECT id FROM users WHERE username=?", (email,)).fetchone():
+        raise ValueError(f"A login with username '{email}' already exists")
+    fid = db.insert(
+        """INSERT INTO faculty (full_name,email,phone,designation,department_id,
+           is_active,created_at) VALUES (?,?,?,?,?,?,?)""",
+        (name, email, data.get("phone") or None, data.get("designation") or None,
+         data.get("department_id"), 1, _now()))
+    pw = password or generate_password()
+    db.insert(
+        "INSERT INTO users (username,password_hash,role,display_name,faculty_id) VALUES (?,?,?,?,?)",
+        (email, generate_password_hash(pw), "faculty", name, fid))
+    return fid, pw
+
+
+def _faculty_data_from_form(form):
+    return {
+        "full_name": form.get("full_name", "").strip(),
+        "email": form.get("email", "").strip(),
+        "phone": form.get("phone", "").strip(),
+        "designation": form.get("designation", "").strip(),
+        "department_id": _int_or_none(form.get("department_id")),
+    }
+
+
+def _faculty_assignments(db, faculty_id):
+    return db.execute(
+        """SELECT a.*, c.code course_code, c.title course_title,
+                  c.semester_no, c.program_id, p.name prog_name, ss.name sess_name
+           FROM course_assignments a
+           JOIN courses c ON c.id=a.course_id
+           LEFT JOIN programs p ON p.id=c.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+           WHERE a.faculty_id=? ORDER BY ss.name, c.code""",
+        (faculty_id,)).fetchall()
+
+
+def _faculty_form_values(db, faculty=None):
+    courses = db.execute(
+        """SELECT c.*, p.name prog_name FROM courses c
+           LEFT JOIN programs p ON p.id=c.program_id
+           ORDER BY p.name, c.semester_no, c.code""").fetchall()
+    return {"departments": dept_options(db), "designations": FACULTY_DESIGNATIONS,
+            "faculty": faculty, "courses": courses,
+            "sessions": session_options(db),
+            "assignments": _faculty_assignments(db, faculty["id"]) if faculty else []}
+
+
+def _get_faculty_or_redirect(db, faculty_id):
+    fac = db.execute("SELECT * FROM faculty WHERE id=?", (faculty_id,)).fetchone()
+    if not fac:
+        flash("Faculty member not found.", "error")
+    return fac
+
+
+@app.route("/admin/faculty")
+@role_required("admin")
+def admin_faculty():
+    db = get_db()
+    clauses, params = [], []
+    q = (request.args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        clauses.append(f"(f.full_name {LIKE} ? OR f.email {LIKE} ?)")
+        params += [like, like]
+    dept_id = _int_or_none(request.args.get("department_id"))
+    if dept_id:
+        clauses.append("f.department_id=?")
+        params.append(dept_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = db.execute(
+        f"""SELECT f.*, d.name dept,
+                  (SELECT COUNT(*) FROM course_assignments a WHERE a.faculty_id=f.id) assign_count
+            FROM faculty f LEFT JOIN departments d ON d.id=f.department_id
+            {where} ORDER BY f.full_name""", params).fetchall()
+    return render_template("admin_faculty.html", rows=rows,
+                           departments=dept_options(db), args=request.args)
+
+
+@app.route("/admin/faculty/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_faculty_new():
+    db = get_db()
+    if request.method == "POST":
+        data = _faculty_data_from_form(request.form)
+        chosen_pw = request.form.get("initial_password", "").strip() or None
+        try:
+            fid, pw = create_faculty(db, data, password=chosen_pw)
+            db.commit()
+            flash(f"Faculty member '{data['full_name']}' added. Faculty login — "
+                  f"username: {data['email']} · initial password: {pw} — "
+                  f"shown ONCE, note it now.", "ok")
+            return redirect(url_for("admin_faculty"))
+        except ValueError as e:
+            db.rollback()
+            flash(f"Could not add faculty member: {e}", "error")
+        except Exception as e:
+            db.rollback()
+            flash("Could not add faculty member: " + ("duplicate email." if is_unique_error(e) else str(e)), "error")
+    return render_template("faculty_form.html", **_faculty_form_values(db))
+
+
+@app.route("/admin/faculty/<int:faculty_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_faculty_edit(faculty_id):
+    db = get_db()
+    fac = _get_faculty_or_redirect(db, faculty_id)
+    if not fac:
+        return redirect(url_for("admin_faculty"))
+    if request.method == "POST":
+        data = _faculty_data_from_form(request.form)
+        is_active = 1 if request.form.get("is_active") else 0
+        clash = None
+        if data["email"]:
+            clash = db.execute("SELECT id FROM faculty WHERE email=? AND id<>?",
+                               (data["email"], faculty_id)).fetchone()
+            if not clash:
+                clash = db.execute(
+                    "SELECT id FROM users WHERE username=? AND COALESCE(faculty_id,-1)<>?",
+                    (data["email"], faculty_id)).fetchone()
+        if not data["full_name"] or not data["email"] or "@" not in data["email"]:
+            flash("Full name and a valid email are required.", "error")
+        elif clash:
+            flash(f"Email '{data['email']}' is already in use by another account.", "error")
+        else:
+            try:
+                db.execute(
+                    """UPDATE faculty SET full_name=?, email=?, phone=?,
+                       designation=?, department_id=?, is_active=? WHERE id=?""",
+                    (data["full_name"], data["email"], data["phone"] or None,
+                     data["designation"] or None, data["department_id"],
+                     is_active, faculty_id))
+                # the login's username IS the email: keep both in sync
+                db.execute(
+                    "UPDATE users SET username=?, display_name=?, is_active=? "
+                    "WHERE faculty_id=?",
+                    (data["email"], data["full_name"], is_active, faculty_id))
+                db.commit()
+                flash(f"Faculty member '{data['full_name']}' updated.", "ok")
+                return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
+            except Exception as e:
+                db.rollback()
+                flash("Could not update faculty member: " + ("duplicate email." if is_unique_error(e) else str(e)), "error")
+    return render_template("faculty_form.html", **_faculty_form_values(db, fac))
+
+
+@app.route("/admin/faculty/<int:faculty_id>/reset-password", methods=["POST"])
+@role_required("admin")
+def admin_faculty_reset_password(faculty_id):
+    db = get_db()
+    fac = _get_faculty_or_redirect(db, faculty_id)
+    if not fac:
+        return redirect(url_for("admin_faculty"))
+    pw = generate_password()
+    db.execute("UPDATE users SET password_hash=? WHERE faculty_id=?",
+               (generate_password_hash(pw), faculty_id))
+    db.commit()
+    flash(f"Password reset for {fac['email']} ({fac['full_name']}). "
+          f"New password: {pw} — shown ONCE, note it now.", "ok")
+    return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
+
+
+@app.route("/admin/faculty/<int:faculty_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_faculty_delete(faculty_id):
+    db = get_db()
+    fac = _get_faculty_or_redirect(db, faculty_id)
+    if not fac:
+        return redirect(url_for("admin_faculty"))
+    assigned = db.execute(
+        "SELECT COUNT(*) c FROM course_assignments WHERE faculty_id=?",
+        (faculty_id,)).fetchone()["c"]
+    if assigned:
+        flash(f"Cannot delete '{fac['full_name']}': they still hold "
+              f"{assigned} course assignment(s). Remove the assignments first "
+              f"(or deactivate the account instead).", "error")
+        return redirect(url_for("admin_faculty"))
+    db.execute("DELETE FROM users WHERE faculty_id=?", (faculty_id,))
+    db.execute("DELETE FROM faculty WHERE id=?", (faculty_id,))
+    db.commit()
+    flash(f"Faculty member '{fac['full_name']}' and their login deleted.", "ok")
+    return redirect(url_for("admin_faculty"))
+
+
+@app.route("/admin/faculty/<int:faculty_id>/assign", methods=["POST"])
+@role_required("admin")
+def admin_faculty_assign(faculty_id):
+    db = get_db()
+    fac = _get_faculty_or_redirect(db, faculty_id)
+    if not fac:
+        return redirect(url_for("admin_faculty"))
+    course_id = _int_or_none(request.form.get("course_id"))
+    session_id = _int_or_none(request.form.get("session_id"))
+    back = redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
+    course = db.execute("SELECT * FROM courses WHERE id=?", (course_id,)).fetchone() if course_id else None
+    sess = db.execute("SELECT * FROM academic_sessions WHERE id=?", (session_id,)).fetchone() if session_id else None
+    if not course or not sess:
+        flash("Choose a course and a session to assign.", "error")
+        return back
+    mine = db.execute(
+        "SELECT id FROM course_assignments WHERE faculty_id=? AND course_id=? AND session_id=?",
+        (faculty_id, course_id, session_id)).fetchone()
+    if mine:
+        flash(f"{course['code']} in {sess['name']} is already assigned to "
+              f"{fac['full_name']}.", "error")
+        return back
+    other = db.execute(
+        """SELECT f.full_name FROM course_assignments a
+           JOIN faculty f ON f.id=a.faculty_id
+           WHERE a.course_id=? AND a.session_id=? AND a.faculty_id<>?""",
+        (course_id, session_id, faculty_id)).fetchone()
+    if other:
+        flash(f"{course['code']} in {sess['name']} is already assigned to "
+              f"{other['full_name']} — one primary teacher per course + session. "
+              f"Remove that assignment first if you want to reassign it.", "error")
+        return back
+    try:
+        db.insert(
+            """INSERT INTO course_assignments (faculty_id,course_id,session_id,created_at)
+               VALUES (?,?,?,?)""",
+            (faculty_id, course_id, session_id, _now()))
+        db.commit()
+        flash(f"Assigned {course['code']} ({sess['name']}) to {fac['full_name']}.", "ok")
+    except Exception as e:
+        db.rollback()
+        flash("Could not assign course: " + ("already assigned." if is_unique_error(e) else str(e)), "error")
+    return back
+
+
+@app.route("/admin/faculty/<int:faculty_id>/assign/<int:assignment_id>/remove", methods=["POST"])
+@role_required("admin")
+def admin_faculty_unassign(faculty_id, assignment_id):
+    db = get_db()
+    fac = _get_faculty_or_redirect(db, faculty_id)
+    if not fac:
+        return redirect(url_for("admin_faculty"))
+    row = db.execute(
+        """SELECT a.*, c.code FROM course_assignments a JOIN courses c ON c.id=a.course_id
+           WHERE a.id=? AND a.faculty_id=?""", (assignment_id, faculty_id)).fetchone()
+    if row:
+        db.execute("DELETE FROM course_assignments WHERE id=?", (assignment_id,))
+        db.commit()
+        flash(f"Assignment removed: {row['code']} is no longer taught by "
+              f"{fac['full_name']} in that session.", "ok")
+    return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
 
 
 # ---------------------------------------------------------------- students: Excel
@@ -3528,6 +3871,179 @@ def student_repository_download(doc_id):
     if not doc or not doc.get("is_published"):
         abort(404)
     return _serve_blob(doc)
+
+
+# ================================================================ v0.7 FACULTY PORTAL
+# A teacher sees ONLY their own course assignments. Marks entry writes into
+# the same results store as the admin sheet (save_result / find_result /
+# sheet_students), but faculty can never publish — and once the admin has
+# published a set, the faculty sheet for it is locked read-only.
+
+def _current_faculty(db):
+    fid = session.get("faculty_id")
+    if not fid:
+        return None
+    return db.execute(
+        """SELECT f.*, d.name dept_name FROM faculty f
+           LEFT JOIN departments d ON d.id=f.department_id WHERE f.id=?""",
+        (fid,)).fetchone()
+
+
+def _own_assignment_or_none(db, assignment_id):
+    """The assignment row (with course/program/session context) ONLY when it
+    belongs to the logged-in teacher — every faculty course route goes
+    through this, so another teacher's assignment id is simply not found."""
+    return db.execute(
+        """SELECT a.*, c.code course_code, c.title course_title,
+                  c.semester_no, c.program_id, p.name prog_name,
+                  ss.name sess_name
+           FROM course_assignments a
+           JOIN courses c ON c.id=a.course_id
+           LEFT JOIN programs p ON p.id=c.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+           WHERE a.id=? AND a.faculty_id=?""",
+        (assignment_id, session.get("faculty_id"))).fetchone()
+
+
+def _result_set_state(db, course_id, semester_no, session_id):
+    """Publish state of one result set, exactly as the admin sheet sees it."""
+    rows = db.execute(
+        """SELECT COALESCE(is_published,0) pub FROM results
+           WHERE course_id=? AND semester_no=?
+             AND (session_id=? OR session_id IS NULL)""",
+        (course_id, semester_no, session_id)).fetchall()
+    total = len(rows)
+    published = sum(1 for r in rows if r["pub"])
+    if total == 0:
+        state = "No marks entered"
+    elif published == total:
+        state = "Published"
+    elif published == 0:
+        state = "Unpublished"
+    else:
+        state = "Partially published"
+    return state, published, total
+
+
+@app.route("/faculty")
+@role_required("faculty")
+def faculty_dashboard():
+    db = get_db()
+    fac = _current_faculty(db)
+    if not fac:
+        flash("No faculty record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    groups, by_session = [], {}
+    for a in _faculty_assignments(db, fac["id"]):
+        a = dict(a)
+        a["student_count"] = len(sheet_students(
+            db, a["program_id"], a["session_id"], a["course_id"], a["semester_no"]))
+        a["result_state"], _, _ = _result_set_state(
+            db, a["course_id"], a["semester_no"], a["session_id"])
+        key = a["session_id"]
+        if key not in by_session:
+            by_session[key] = {"session_name": a["sess_name"], "courses": []}
+            groups.append(by_session[key])
+        by_session[key]["courses"].append(a)
+    return render_template("faculty_dashboard.html", faculty=fac, groups=groups)
+
+
+@app.route("/faculty/course/<int:assignment_id>/students")
+@role_required("faculty")
+def faculty_course_students(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    roster = sheet_students(db, a["program_id"], a["session_id"],
+                            a["course_id"], a["semester_no"])
+    return render_template("faculty_students.html", a=a, roster=roster)
+
+
+@app.route("/faculty/course/<int:assignment_id>/students.xlsx")
+@role_required("faculty")
+def faculty_course_students_xlsx(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    roster = sheet_students(db, a["program_id"], a["session_id"],
+                            a["course_id"], a["semester_no"])
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Class List"
+    ws.append(["Reg No", "Name", "Signature"])
+    for s in roster:
+        ws.append([s["registration_no"], s["name"], ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name=f"class-list-{a['course_code']}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/faculty/course/<int:assignment_id>/marks", methods=["GET", "POST"])
+@role_required("faculty")
+def faculty_course_marks(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    course = db.execute("SELECT * FROM courses WHERE id=?", (a["course_id"],)).fetchone()
+    bands = get_grade_bands(db)
+    state, published_n, total_n = _result_set_state(
+        db, a["course_id"], a["semester_no"], a["session_id"])
+    locked = total_n > 0 and published_n == total_n
+    if request.method == "POST":
+        if locked:
+            flash("These results have been PUBLISHED by the admin — marks are "
+                  "locked and can no longer be edited here.", "error")
+            return redirect(url_for("faculty_course_marks",
+                                    assignment_id=assignment_id))
+        students = sheet_students(db, a["program_id"], a["session_id"],
+                                  a["course_id"], a["semester_no"])
+        saved, problems = 0, []
+        for student in students:
+            sid = student["id"]
+            existing = find_result(db, sid, a["course_id"],
+                                   a["semester_no"], a["session_id"])
+            if existing and existing.get("is_published"):
+                continue  # a published row is never faculty-editable
+            if request.form.get(f"absent_{sid}"):
+                save_result(db, student, course, a["session_id"],
+                            a["semester_no"], None, True, bands)
+                saved += 1
+                continue
+            raw = request.form.get(f"marks_{sid}", "")
+            try:
+                marks = _parse_marks(raw)
+            except ValueError as e:
+                problems.append(f"{student['name']}: {e}")
+                continue
+            if marks is None:
+                continue  # blank = leave unchanged, exactly like the admin sheet
+            save_result(db, student, course, a["session_id"],
+                        a["semester_no"], marks, False, bands)
+            saved += 1
+        db.commit()
+        flash(f"Marks saved — {saved} result(s) recorded. They stay "
+              f"UNPUBLISHED (hidden from students) until the admin publishes them.", "ok")
+        for p in problems:
+            flash(p, "error")
+        return redirect(url_for("faculty_course_marks",
+                                assignment_id=assignment_id))
+    students = sheet_students(db, a["program_id"], a["session_id"],
+                              a["course_id"], a["semester_no"])
+    rows = []
+    for s in students:
+        res = find_result(db, s["id"], a["course_id"],
+                          a["semester_no"], a["session_id"])
+        grade, gp = result_grade_gp(res, bands) if res else (None, None)
+        rows.append({"student": s, "result": res, "grade": grade, "gp": gp})
+    return render_template("faculty_marks.html", a=a, rows=rows,
+                           state=state, locked=locked)
 
 
 # ------------------------------------------------------------ student card

@@ -1,0 +1,40 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Faculty Member' if faculty else 'Add Faculty Member' }}</h2>
+{% set f = faculty %}
+<form method="post" class="form-card wide">
+<div class="form-grid">
+<div><label>Full Name *</label><input name="full_name" required value="{{ f.full_name if f else '' }}"></div>
+<div><label>Email * (this is the login username)</label><input name="email" type="email" required value="{{ f.email if f else '' }}"></div>
+<div><label>Phone</label><input name="phone" value="{{ f.phone if f and f.phone else '' }}"></div>
+<div><label>Designation</label><select name="designation"><option value="">—</option>
+{% for d in designations %}<option value="{{ d }}" {{ 'selected' if f and f.designation==d else '' }}>{{ d }}</option>{% endfor %}</select></div>
+<div><label>Department</label><select name="department_id"><option value="">—</option>
+{% for d in departments %}<option value="{{ d.id }}" {{ 'selected' if f and f.department_id==d.id else '' }}>{{ d.name }}</option>{% endfor %}</select></div>
+{% if f %}<div><label class="check"><input type="checkbox" name="is_active" value="1" {{ 'checked' if f.is_active else '' }}> Active (an inactive member cannot log in)</label></div>{% endif %}
+</div>
+{% if not f %}<label>Initial Password (optional — leave blank to auto-generate; it is shown once after saving)</label>
+<input name="initial_password" autocomplete="new-password">{% endif %}
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if f else 'Add Faculty Member' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_faculty') }}">Cancel</a></div></form>
+
+{% if f %}
+<h2 style="margin-top:28px">Login Password</h2>
+<form method="post" class="form-card" action="{{ url_for('admin_faculty_reset_password', faculty_id=f.id) }}" onsubmit="return confirm('Reset the login password for {{ f.email }}? The new password is shown once.');">
+<p class="muted">Generate a fresh login password for this member. It is shown <strong>once</strong> after resetting — note it down and hand it over.</p>
+<div class="form-actions"><button class="btn" type="submit">Reset Password</button></div></form>
+
+<h2 style="margin-top:28px">Course Assignments</h2>
+<p class="muted">A course + session has <strong>one primary teacher</strong>: a course already assigned to someone else in the same session cannot be assigned again until that assignment is removed.</p>
+<table><tr><th>Course</th><th>Program</th><th>Session</th><th>Semester</th><th></th></tr>
+{% for a in assignments %}<tr><td>{{ a.course_code }} — {{ a.course_title }}</td><td>{{ a.prog_name or '—' }}</td><td>{{ a.sess_name or '—' }}</td><td>{{ a.semester_no }}</td>
+<td><form method="post" action="{{ url_for('admin_faculty_unassign', faculty_id=f.id, assignment_id=a.id) }}" onsubmit="return confirm('Remove this assignment?');"><button class="btn small danger" type="submit">Remove</button></form></td></tr>
+{% else %}<tr><td colspan="5">No courses assigned yet.</td></tr>{% endfor %}</table>
+
+<form method="post" class="filter-bar" action="{{ url_for('admin_faculty_assign', faculty_id=f.id) }}" style="margin-top:14px">
+<select name="course_id" required><option value="">Choose a course…</option>
+{% for c in courses %}<option value="{{ c.id }}">{{ c.code }} — {{ c.title }} ({{ c.prog_name or 'No program' }}, Sem {{ c.semester_no }})</option>{% endfor %}</select>
+<select name="session_id" required><option value="">Choose a session…</option>
+{% for s in sessions %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+<button class="btn green" type="submit">Assign Course</button></form>
+{% endif %}
+{% endblock %}

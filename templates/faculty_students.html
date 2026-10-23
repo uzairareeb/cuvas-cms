@@ -1,0 +1,10 @@
+{% extends "faculty_base.html" %}
+{% block faculty_body %}<div class="toolbar"><h2>Class List — {{ a.course_code }}</h2>
+<div><a class="btn ghost" href="{{ url_for('faculty_dashboard') }}">← My Courses</a>
+<a class="btn green" href="{{ url_for('faculty_course_students_xlsx', assignment_id=a.id) }}">⬇ Download Class List (.xlsx)</a></div></div>
+<p class="muted">{{ a.course_title }} · {{ a.prog_name or '' }} · {{ a.sess_name or '' }} · Semester {{ a.semester_no }} · {{ roster|length }} student(s)</p>
+
+<table><tr><th>Reg No</th><th>Name</th><th>Program</th><th>Semester</th></tr>
+{% for s in roster %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ a.prog_name or '—' }}</td><td>{{ a.semester_no }}</td></tr>
+{% else %}<tr><td colspan="4">No students are enrolled for this course in this session yet.</td></tr>{% endfor %}</table>
+{% endblock %}

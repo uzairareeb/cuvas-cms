@@ -1,0 +1,23 @@
+{% extends "faculty_base.html" %}
+{% block faculty_body %}<div class="toolbar"><h2>Faculty Dashboard</h2></div>
+
+<div class="card" style="margin-bottom:18px">
+<h3 style="margin-top:0">{{ faculty.full_name }}</h3>
+<p class="muted" style="margin:4px 0">{{ faculty.designation or 'Faculty Member' }}{% if faculty.dept_name %} · {{ faculty.dept_name }}{% endif %}</p>
+<p style="margin:4px 0">✉ {{ faculty.email }}{% if faculty.phone %} · ☎ {{ faculty.phone }}{% endif %}</p>
+</div>
+
+<h3>My Courses</h3>
+{% for g in groups %}<h4 style="margin:18px 0 8px">{{ g.session_name or 'Session' }}</h4>
+<div class="grid">
+{% for a in g.courses %}<div class="card">
+<p style="margin:0 0 4px"><strong>{{ a.course_code }}</strong> — {{ a.course_title }}</p>
+<p class="muted" style="margin:2px 0">{{ a.prog_name or '—' }} · Semester {{ a.semester_no }}</p>
+<p style="margin:6px 0">🧑‍🎓 {{ a.student_count }} student(s) enrolled</p>
+<p style="margin:6px 0">Results: <span class="pill {{ 'paid' if a.result_state=='Published' else 'pending' if a.result_state=='Unpublished' else 'submitted' if a.result_state=='Partially published' else 'split' }}">{{ a.result_state }}</span></p>
+<p style="margin:10px 0 0"><a class="btn small ghost" href="{{ url_for('faculty_course_students', assignment_id=a.id) }}">Students</a>
+<a class="btn small green" href="{{ url_for('faculty_course_marks', assignment_id=a.id) }}">Enter Marks</a></p>
+</div>{% endfor %}
+</div>
+{% else %}<p class="muted">No courses are assigned to you yet. The admin assigns courses from Faculty → Edit / Assign Courses.</p>{% endfor %}
+{% endblock %}

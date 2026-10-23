@@ -1,0 +1,18 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Faculty <span class="muted">({{ rows|length }})</span></h2>
+<div><a class="btn green" href="{{ url_for('admin_faculty_new') }}">+ Add Faculty</a></div></div>
+
+<form method="get" class="filter-bar">
+<input name="q" placeholder="Search name / email" value="{{ args.get('q','') }}" style="min-width:240px">
+<select name="department_id"><option value="">All departments</option>
+{% for d in departments %}<option value="{{ d.id }}" {{ 'selected' if args.get('department_id')==d.id|string else '' }}>{{ d.name }}</option>{% endfor %}</select>
+<button class="btn green" type="submit">Filter</button>
+<a class="btn ghost" href="{{ url_for('admin_faculty') }}">Reset</a></form>
+
+<table><tr><th>Name</th><th>Email (login username)</th><th>Phone</th><th>Designation</th><th>Department</th><th>Courses</th><th>Status</th><th>Actions</th></tr>
+{% for f in rows %}<tr><td>{{ f.full_name }}</td><td>{{ f.email }}</td><td>{{ f.phone or '—' }}</td><td>{{ f.designation or '—' }}</td><td>{{ f.dept or '—' }}</td><td>{{ f.assign_count }}</td>
+<td>{% if f.is_active %}<span class="pill paid">Active</span>{% else %}<span class="pill rejected">Inactive</span>{% endif %}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_faculty_edit', faculty_id=f.id) }}">Edit / Assign Courses</a>
+<form method="post" action="{{ url_for('admin_faculty_delete', faculty_id=f.id) }}" onsubmit="return confirm('Delete faculty member {{ f.full_name }} and their login? (Blocked while they hold course assignments.)');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="8">No faculty members match.</td></tr>{% endfor %}</table>
+{% endblock %}

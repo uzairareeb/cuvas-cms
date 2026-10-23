@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.6
+# MY CUVAS — Campus Management System (Demo) v0.7
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -11,6 +11,9 @@ append-only ledger behind the Account Statement. **Step 9 (v0.4)** adds the
 results & exams system, and **Step 10 (v0.6)** adds the student-services
 pack — document verification, support tickets, notifications admin, the
 document repository and the student card PDF — see the v0.6 section below.
+**Step 11 (v0.7)** adds the faculty portal — faculty records with
+auto-created logins, course assignments and a teacher portal for rosters
+and marks entry — see the v0.7 section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -41,10 +44,18 @@ Against PostgreSQL instead: `DATABASE_URL=postgresql://… .venv/bin/python app.
 
 ## Demo credentials (demo-only, fictional)
 
-| Role    | Username  | Password     |
-|---------|-----------|--------------|
-| Admin   | `admin`   | `Admin@123`  |
+| Role    | Username  | Password      |
+|---------|-----------|---------------|
+| Admin   | `admin`   | `Admin@123`   |
 | Student | `student` | `Student@123` |
+| Faculty | `faculty` | `Faculty@123` |
+
+The demo faculty account belongs to the fictional “Demo Teacher”
+(`demo.teacher@cuvas.edu.pk`, Lecturer, Department of Computer Science)
+and is pre-assigned two of the demo student's Semester 3 courses
+(CS-201, CS-202) in the Fall 2024 (Demo) session. Faculty members added by
+the admin get their own login: **username = email**, with an initial
+password shown to the admin **once**, exactly like student logins.
 
 Students added by the admin (form or Excel import) get their own login:
 **username = Registration No**, with an initial password that is shown to the
@@ -65,6 +76,13 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   - `/admin/students/export.xlsx` — export of the currently filtered list
 - `/admin/departments`, `/admin/programs`, `/admin/sessions`, `/admin/courses` — full CRUD;
   deletes are blocked with an explanation while other records still reference the row
+- `/admin/faculty` — faculty records (search by name / email, department filter)
+  - `/admin/faculty/new` — add faculty member (auto-creates the login, username = email)
+  - `/admin/faculty/<id>/edit` — edit profile, activate / deactivate (deactivation
+    blocks login), reset password (shown once), and manage **course assignments**
+  - Delete is blocked while the member holds course assignments
+- `/faculty` — the faculty portal (role `faculty` only): profile card + own
+  courses grouped by session, class roster + Excel export, marks entry
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -166,6 +184,48 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   program”. Buttons: Profile tab of the student dashboard and the admin
   student list (“Card PDF”).
 
+## Faculty Portal (Step 11, v0.7)
+
+- **Faculty records** (`faculty` table: name, unique email, phone,
+  designation — Professor / Associate Professor / Assistant Professor /
+  Lecturer — department, active flag). Creating a record auto-creates the
+  login (`users` row, role `faculty`, linked via the additive
+  `users.faculty_id` column; **username = email**); the initial password
+  is admin-set on the form or generated, and is shown to the admin
+  **once**, mirroring the student flow. Editing the email keeps the login
+  username in sync; resetting the password shows the new one once;
+  **deactivating** a member (faculty flag, mirrored onto the login)
+  blocks sign-in with the usual friendly error. Delete is blocked while
+  course assignments exist.
+- **Course assignments** (`course_assignments`: faculty + course +
+  session, unique together) are managed on the faculty edit page. One
+  course + session has **one primary teacher**: assigning it to a second
+  teacher is blocked with a message naming the current teacher — reassign
+  only after removing the existing assignment.
+- **Teacher portal** (`/faculty`, own shell in the same theme): a profile
+  summary card and **My Courses** grouped by session — course code/title,
+  program, semester, enrolled-student count and the result set's publish
+  state. The roster (`/faculty/course/<assignment_id>/students`) is
+  exactly the admin marks-sheet cohort for that course + session (Active
+  students of the program + session, plus anyone already holding a
+  result), with an **Excel export** (Reg No, Name, blank Signature
+  column). Marks entry (`/faculty/course/<assignment_id>/marks`) is the
+  admin sheet's grid (marks 0–100 or Absent; blank = unchanged) writing
+  into the **same results store** via the same helpers — but there is no
+  publish control: saves always leave the set **Unpublished**, and once
+  the admin publishes a set the faculty sheet locks **read-only** (page
+  note + server-side POST guard; individually published rows are never
+  faculty-editable either). Every faculty course route resolves the
+  assignment through an ownership check, so another teacher's assignment
+  id returns **404** on view, roster, export and marks (GET and POST).
+  Role guards are symmetric: faculty cannot open `/admin/*` or
+  `/student`, and admin/student cannot open `/faculty/*`.
+- **Demo seed** (`backfill_v07`, runs only while the faculty table is
+  empty): the fictional **Demo Teacher** above, login `faculty` /
+  `Faculty@123`, assigned CS-201 + CS-202 in the demo student's session
+  so the roster shows the seeded class. It never touches results — the
+  demo transcript (CGPA 3.63) is unchanged.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -207,8 +267,22 @@ seeded announcements, and is a no-op on second boot.
 Preset: Flask). Without `DATABASE_URL`, Vercel uses an ephemeral SQLite DB under
 `/tmp` that re-seeds on cold start; set `DATABASE_URL` (Neon) for real data.
 
-## Not in v0.6
+`verify_v07.py` adds a 64-check pass over Step 11 (faculty create →
+shown-once login, duplicate email blocked, assignment create +
+duplicate blocked, second teacher blocked from the same course+session,
+dashboard isolation, roster == enrolled cohort, roster Excel shape,
+cross-faculty 404s on view/roster/export/marks GET+POST, faculty marks →
+invisible while Unpublished → visible after the ADMIN publishes, no
+faculty publish control, post-publish lock, role guards both ways,
+email-change login sync, reset-password flow, deactivation blocks login,
+delete guard then delete-after-unassign, demo teacher seed + roster, demo
+transcript intact, and a v0.6-era migration simulation: strip the new
+tables/column + faculty logins, boot, assert clean re-seed and a no-op
+second boot). v0.7 result: **all five suites ALL PASS on both backends**
+(SQLite: 43 + 52 + 60 + 72 + 64; PostgreSQL identical).
 
-Faculty portal, clearance, scholarships application flow, course repeat,
-timetable, surveys, dept/accounts/COE portals — Phase 2 (see
+## Not in v0.7
+
+Attendance, clearance, scholarships application flow, course repeat,
+timetable, surveys, dept/accounts/COE portals — the rest of Phase 2 (see
 `../architecture.md`).
