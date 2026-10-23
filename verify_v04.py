@@ -263,8 +263,9 @@ demo = m.app.test_client()
 login(demo, "student", "Student@123")
 dh = demo.get("/student").get_data(as_text=True)
 dpane = transcript_pane(dh)
-check("demo transcript: 8 tabs + CGPA 3.63 intact",
-      dh.count("data-tab=") == 8 and "Overall CGPA: <strong>3.63</strong>" in dpane)
+# v0.6 added the My Documents + Support Tickets tabs: 10 tabs total
+check("demo transcript: 10 tabs + CGPA 3.63 intact",
+      dh.count("data-tab=") == 10 and "Overall CGPA: <strong>3.63</strong>" in dpane)
 check("demo SGPA semesters 3.61 / 3.65 intact",
       "SGPA: 3.61" in dpane and "SGPA: 3.65" in dpane, dpane[:120])
 demo_pdf = demo.get("/student/transcript.pdf")

@@ -249,7 +249,8 @@ check("students import page loads", admin.get("/admin/students/import").status_c
 dash_html = admin.get("/admin").get_data(as_text=True)
 check("admin dashboard loads + student KPI reflects adds (=7)", ">7<" in dash_html)
 d = demo.get("/student").get_data(as_text=True)
-check("demo student still has 8 tabs + CGPA 3.63", d.count("data-tab=") == 8 and "3.63" in d)
+# v0.6 added the My Documents + Support Tickets tabs: 10 tabs total
+check("demo student still has 10 tabs + CGPA 3.63", d.count("data-tab=") == 10 and "3.63" in d)
 
 print()
 print("RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAILURES: {FAIL}")

@@ -244,7 +244,8 @@ check("dashboard student count reflects CRUD (=9)", ">9<" in dash)
 demo = m.app.test_client()
 login(demo, "student", "Student@123")
 d = demo.get("/student").get_data(as_text=True)
-check("demo student 8 tabs + CGPA intact", d.count('data-tab=') == 8 and "3.63" in d)
+# v0.6 added the My Documents + Support Tickets tabs: 10 tabs total
+check("demo student 10 tabs + CGPA intact", d.count('data-tab=') == 10 and "3.63" in d)
 
 print()
 print("RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAILURES: {FAIL}")

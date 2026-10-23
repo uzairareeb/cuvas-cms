@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.4
+MY CUVAS — Campus Management System (Demo) v0.6
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -14,6 +14,13 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      sheets with publish/unpublish, marks Excel download/import, transcripts
      driven by published results (one SGPA/CGPA helper for web tab + PDF),
      transcript PDF, and roll number slips (single + bulk PDF).
+ 10. v0.6 student services — document uploads with admin verification
+     (student_documents, files stored as DB blobs), support tickets with
+     admin/student threads (tickets + ticket_messages), admin-managed
+     notifications feeding the landing page + student News Feed (the v0.1
+     notifications table, extended additively), an official document
+     repository (repository_docs, blobs), and a student card PDF with a
+     Code39 barcode of the registration number.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -200,6 +207,25 @@ DDL = [
     f"""CREATE TABLE IF NOT EXISTS grade_bands (
         id {_PK}, min_marks REAL NOT NULL, grade TEXT NOT NULL,
         grade_point REAL NOT NULL)""",
+    # --- v0.6 student services (new tables only) ---
+    f"""CREATE TABLE IF NOT EXISTS student_documents (
+        id {_PK}, student_id INTEGER REFERENCES students(id),
+        doc_type TEXT, file_name TEXT, file_mime TEXT,
+        file_data {"BYTEA" if PG else "BLOB"},
+        status TEXT DEFAULT 'Pending', admin_remarks TEXT,
+        uploaded_at TEXT, reviewed_at TEXT, reviewed_by TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS tickets (
+        id {_PK}, student_id INTEGER REFERENCES students(id),
+        category TEXT, subject TEXT, status TEXT DEFAULT 'Open',
+        created_at TEXT, updated_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS ticket_messages (
+        id {_PK}, ticket_id INTEGER REFERENCES tickets(id),
+        sender_role TEXT, sender_name TEXT, body TEXT, created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS repository_docs (
+        id {_PK}, title TEXT, category TEXT, description TEXT,
+        file_name TEXT, file_mime TEXT,
+        file_data {"BYTEA" if PG else "BLOB"},
+        uploaded_by TEXT, created_at TEXT, is_published INTEGER DEFAULT 1)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -222,6 +248,12 @@ EXTRA_COLUMNS = {
                 ("is_absent", "INTEGER DEFAULT 0"),
                 ("is_published", "INTEGER DEFAULT 0"),
                 ("enrollment_id", "INTEGER")],
+    # --- v0.6 notifications columns (the v0.1 table gains audience / publish
+    # state / audit fields additively; existing rows keep showing because the
+    # defaults are audience='All' and is_published=1) ---
+    "notifications": [("audience", "TEXT DEFAULT 'All'"),
+                      ("is_published", "INTEGER DEFAULT 1"),
+                      ("created_by", "TEXT"), ("created_at", "TEXT")],
 }
 
 
@@ -247,6 +279,7 @@ def init_db():
     seed(db)
     backfill_v03(db)
     backfill_v04(db)
+    backfill_v06(db)
     db.commit()
     db.conn.close()
 
@@ -382,6 +415,18 @@ def backfill_v04(db):
         """UPDATE results SET is_published=1
            WHERE COALESCE(is_published,0)=0 AND COALESCE(is_absent,0)=0
              AND marks_obtained IS NULL AND grade IS NOT NULL""")
+
+
+# ------------------------------------------------------- v0.6 services backfill
+def backfill_v06(db):
+    """Idempotent v0.6 migration for databases created by v0.1–v0.4: the
+    notifications table gains its v0.6 columns via ensure_columns (existing
+    rows get audience='All' / is_published=1 from the column defaults, so
+    seeded announcements keep showing); here we only backfill created_at
+    from the legacy published_at date. No-op on re-run."""
+    db.execute(
+        """UPDATE notifications SET created_at=published_at
+           WHERE created_at IS NULL AND published_at IS NOT NULL""")
 
 
 def _today():
@@ -578,7 +623,10 @@ def home_for_role():
 @app.route("/")
 def landing():
     db = get_db()
-    news = db.execute("SELECT * FROM notifications ORDER BY published_at DESC LIMIT 3").fetchall()
+    news = db.execute(
+        """SELECT * FROM notifications
+           WHERE COALESCE(is_published,1)=1 AND COALESCE(audience,'All') IN ('All','Students')
+           ORDER BY published_at DESC, id DESC LIMIT 3""").fetchall()
     return render_template("landing.html", news=news)
 
 
@@ -1433,7 +1481,21 @@ def student_dashboard():
         flash("No student record is linked to this login.", "error")
         return redirect(url_for("logout"))
     certs = db.execute("SELECT * FROM certificates WHERE student_id=?", (sid,)).fetchall()
-    news = db.execute("SELECT * FROM notifications ORDER BY published_at DESC").fetchall()
+    news = db.execute(
+        """SELECT * FROM notifications
+           WHERE COALESCE(is_published,1)=1 AND COALESCE(audience,'All') IN ('All','Students')
+           ORDER BY published_at DESC, id DESC""").fetchall()
+    # --- v0.6: own documents, own tickets, published repository items ---
+    my_documents = db.execute(
+        "SELECT id,doc_type,file_name,file_mime,status,admin_remarks,uploaded_at,reviewed_at "
+        "FROM student_documents WHERE student_id=? ORDER BY uploaded_at DESC, id DESC",
+        (sid,)).fetchall()
+    my_tickets = db.execute(
+        "SELECT * FROM tickets WHERE student_id=? ORDER BY updated_at DESC, id DESC",
+        (sid,)).fetchall()
+    repo_docs = db.execute(
+        """SELECT id,title,category,description,file_name,created_at FROM repository_docs
+           WHERE COALESCE(is_published,1)=1 ORDER BY created_at DESC, id DESC""").fetchall()
     enrollments = db.execute(
         """SELECT e.*, c.code, c.title, c.credit_theory, c.credit_lab, c.faculty_name
            FROM enrollments e JOIN courses c ON c.id=e.course_id
@@ -1496,6 +1558,9 @@ def student_dashboard():
         vouchers=vouchers, fee_lines=fee_lines, fee_total=fee_total,
         student_plan=student_plan,
         ledger=ledger, payable=payable, paid=paid, outstanding=payable - paid,
+        my_documents=my_documents, doc_types=DOC_TYPES,
+        my_tickets=my_tickets, ticket_categories=TICKET_CATEGORIES,
+        repo_docs=repo_docs,
         active_tab=active_tab)
 
 
@@ -2913,6 +2978,683 @@ def admin_slips_bulk_pdf():
     return send_file(io.BytesIO(build_slips_pdf(db, [(s, semester_no) for s in students])),
                      as_attachment=True,
                      download_name=f"roll-slips-sem{semester_no}.pdf",
+                     mimetype="application/pdf")
+
+
+# ================================================================ v0.6 SERVICES
+# Student documents, support tickets, notifications admin, document
+# repository and the student card PDF. Rules:
+#   * uploaded files live ONLY as database blobs (like the v0.3 fee proofs)
+#     — never on the filesystem; every file route requires login and checks
+#     ownership / role before serving a single byte;
+#   * a Verified document is locked for the student (no replace / delete);
+#   * notifications (the v0.1 table, extended in v0.6) are the single source
+#     for the landing page and the student News Feed — published items with
+#     audience All/Students only;
+#   * students only ever see PUBLISHED repository documents.
+
+DOC_TYPES = ["CNIC Front", "CNIC Back", "Matric Certificate",
+             "Intermediate Certificate", "Domicile", "Passport Photo", "Other"]
+DOC_STATUSES = ["Pending", "Verified", "Rejected"]
+TICKET_CATEGORIES = ["Fee", "Result", "Admission", "IT / Login", "Hostel", "Other"]
+TICKET_STATUSES = ["Open", "In Process", "Resolved", "Closed"]
+NOTIF_AUDIENCES = ["All", "Students", "Admins"]
+REPO_CATEGORIES = ["Circular", "Notification", "Policy", "Form", "Other"]
+UPLOAD_EXTS = {"pdf", "png", "jpg", "jpeg", "gif", "webp"}
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # ~5 MB per uploaded file
+
+
+def _read_upload(f):
+    """Validate an uploaded file (images + PDF, <= ~5 MB).
+    Returns (blob, error_message) — exactly one of them is None."""
+    if not f or not f.filename:
+        return None, "Please choose a file first."
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in UPLOAD_EXTS:
+        return None, "Only images (PNG / JPG / GIF / WEBP) or PDF files are allowed."
+    blob = f.read()
+    if not blob:
+        return None, "That file is empty."
+    if len(blob) > MAX_UPLOAD_BYTES:
+        return None, "That file is too large — the limit is 5 MB."
+    return blob, None
+
+
+def _serve_blob(row, data_key="file_data"):
+    return send_file(io.BytesIO(bytes(row[data_key])), as_attachment=True,
+                     download_name=row.get("file_name") or "download",
+                     mimetype=row.get("file_mime") or "application/octet-stream")
+
+
+# ------------------------------------------------------- student documents
+def _own_document_or_none(db, doc_id):
+    doc = db.execute("SELECT * FROM student_documents WHERE id=?", (doc_id,)).fetchone()
+    if not doc or doc["student_id"] != session.get("student_id"):
+        return None
+    return doc
+
+
+@app.route("/student/documents/upload", methods=["POST"])
+@role_required("student")
+def student_document_upload():
+    db = get_db()
+    sid = session.get("student_id")
+    doc_type = request.form.get("doc_type", "").strip()
+    if doc_type not in DOC_TYPES:
+        flash("Please choose a valid document type.", "error")
+        return redirect(url_for("student_dashboard", tab="documents"))
+    existing = db.execute(
+        "SELECT * FROM student_documents WHERE student_id=? AND doc_type=?",
+        (sid, doc_type)).fetchone()
+    if existing and existing["status"] == "Verified":
+        flash(f"Your {doc_type} is Verified and locked — it cannot be replaced.", "error")
+        return redirect(url_for("student_dashboard", tab="documents"))
+    f = request.files.get("file")
+    blob, err = _read_upload(f)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("student_dashboard", tab="documents"))
+    mime = f.mimetype or "application/octet-stream"
+    if existing:  # replace a Pending / Rejected document: back to Pending
+        db.execute(
+            """UPDATE student_documents SET file_name=?, file_mime=?, file_data=?,
+               status='Pending', admin_remarks=NULL, uploaded_at=?,
+               reviewed_at=NULL, reviewed_by=NULL WHERE id=?""",
+            (f.filename, mime, blob, _now(), existing["id"]))
+        flash(f"{doc_type} re-uploaded — it is Pending verification again.", "ok")
+    else:
+        db.insert(
+            """INSERT INTO student_documents (student_id,doc_type,file_name,file_mime,
+               file_data,status,uploaded_at) VALUES (?,?,?,?,?, 'Pending', ?)""",
+            (sid, doc_type, f.filename, mime, blob, _now()))
+        flash(f"{doc_type} uploaded — it will appear after admin verification.", "ok")
+    db.commit()
+    return redirect(url_for("student_dashboard", tab="documents"))
+
+
+@app.route("/student/documents/<int:doc_id>/download")
+@role_required("student")
+def student_document_download(doc_id):
+    doc = _own_document_or_none(get_db(), doc_id)
+    if not doc:
+        abort(404)
+    return _serve_blob(doc)
+
+
+@app.route("/student/documents/<int:doc_id>/delete", methods=["POST"])
+@role_required("student")
+def student_document_delete(doc_id):
+    db = get_db()
+    doc = _own_document_or_none(db, doc_id)
+    if not doc:
+        flash("Document not found.", "error")
+        return redirect(url_for("student_dashboard", tab="documents"))
+    if doc["status"] == "Verified":
+        flash("A Verified document is locked and cannot be deleted.", "error")
+        return redirect(url_for("student_dashboard", tab="documents"))
+    db.execute("DELETE FROM student_documents WHERE id=?", (doc_id,))
+    db.commit()
+    flash(f"{doc['doc_type']} deleted.", "ok")
+    return redirect(url_for("student_dashboard", tab="documents"))
+
+
+# --------------------------------------------------------- admin documents
+@app.route("/admin/documents")
+@role_required("admin")
+def admin_documents():
+    db = get_db()
+    status = request.args.get("status", "")
+    q = request.args.get("q", "").strip()
+    sql = """SELECT d.*, s.name student_name, s.registration_no
+             FROM student_documents d JOIN students s ON s.id=d.student_id WHERE 1=1"""
+    params = []
+    if status in DOC_STATUSES:
+        sql += " AND d.status=?"
+        params.append(status)
+    if q:
+        sql += f" AND (s.name {LIKE} ? OR s.registration_no {LIKE} ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    # Pending first by default, then newest
+    sql += """ ORDER BY CASE WHEN d.status='Pending' THEN 0
+                             WHEN d.status='Rejected' THEN 1 ELSE 2 END,
+                      d.uploaded_at DESC, d.id DESC"""
+    rows = db.execute(sql, params).fetchall()
+    counts = {r["status"]: r["c"] for r in db.execute(
+        "SELECT status, COUNT(*) c FROM student_documents GROUP BY status").fetchall()}
+    return render_template("admin_documents.html", rows=rows, counts=counts,
+                           doc_statuses=DOC_STATUSES, args=request.args)
+
+
+@app.route("/admin/documents/<int:doc_id>/download")
+@role_required("admin")
+def admin_document_download(doc_id):
+    doc = get_db().execute(
+        "SELECT * FROM student_documents WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        abort(404)
+    return _serve_blob(doc)
+
+
+@app.route("/admin/documents/<int:doc_id>/verify", methods=["POST"])
+@role_required("admin")
+def admin_document_verify(doc_id):
+    db = get_db()
+    doc = db.execute("SELECT * FROM student_documents WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        flash("Document not found.", "error")
+        return redirect(url_for("admin_documents"))
+    remarks = request.form.get("remarks", "").strip()
+    db.execute(
+        "UPDATE student_documents SET status='Verified', admin_remarks=?, "
+        "reviewed_at=?, reviewed_by=? WHERE id=?",
+        (remarks or doc.get("admin_remarks"), _now(),
+         session.get("display_name"), doc_id))
+    db.commit()
+    flash(f"{doc['doc_type']} for {doc['file_name']} marked Verified.", "ok")
+    return redirect(url_for("admin_documents"))
+
+
+@app.route("/admin/documents/<int:doc_id>/reject", methods=["POST"])
+@role_required("admin")
+def admin_document_reject(doc_id):
+    db = get_db()
+    doc = db.execute("SELECT * FROM student_documents WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        flash("Document not found.", "error")
+        return redirect(url_for("admin_documents"))
+    remarks = request.form.get("remarks", "").strip() or \
+        "Document rejected — please upload a clear, readable copy."
+    db.execute(
+        "UPDATE student_documents SET status='Rejected', admin_remarks=?, "
+        "reviewed_at=?, reviewed_by=? WHERE id=?",
+        (remarks, _now(), session.get("display_name"), doc_id))
+    db.commit()
+    flash(f"{doc['doc_type']} rejected — the student can re-upload it.", "ok")
+    return redirect(url_for("admin_documents"))
+
+
+# --------------------------------------------------------- support tickets
+def _ticket_full(db, ticket_id):
+    return db.execute(
+        """SELECT t.*, s.name student_name, s.registration_no
+           FROM tickets t JOIN students s ON s.id=t.student_id WHERE t.id=?""",
+        (ticket_id,)).fetchone()
+
+
+def _ticket_messages(db, ticket_id):
+    return db.execute(
+        "SELECT * FROM ticket_messages WHERE ticket_id=? ORDER BY id",
+        (ticket_id,)).fetchall()
+
+
+def _add_ticket_message(db, ticket, role, name, body):
+    db.insert(
+        "INSERT INTO ticket_messages (ticket_id,sender_role,sender_name,body,created_at) "
+        "VALUES (?,?,?,?,?)", (ticket["id"], role, name, body, _now()))
+    db.execute("UPDATE tickets SET updated_at=? WHERE id=?", (_now(), ticket["id"]))
+
+
+@app.route("/student/tickets/new", methods=["POST"])
+@role_required("student")
+def student_ticket_new():
+    db = get_db()
+    sid = session.get("student_id")
+    category = request.form.get("category", "").strip()
+    subject = request.form.get("subject", "").strip()
+    body = request.form.get("message", "").strip()
+    if category not in TICKET_CATEGORIES:
+        flash("Please choose a valid ticket category.", "error")
+        return redirect(url_for("student_dashboard", tab="tickets"))
+    if not subject or not body:
+        flash("Ticket subject and message are required.", "error")
+        return redirect(url_for("student_dashboard", tab="tickets"))
+    student = db.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+    tid = db.insert(
+        "INSERT INTO tickets (student_id,category,subject,status,created_at,updated_at) "
+        "VALUES (?,?,?,'Open',?,?)", (sid, category, subject, _now(), _now()))
+    db.insert(
+        "INSERT INTO ticket_messages (ticket_id,sender_role,sender_name,body,created_at) "
+        "VALUES (?, 'student', ?, ?, ?)",
+        (tid, student["name"] if student else session.get("display_name"), body, _now()))
+    db.commit()
+    flash(f"Ticket #{tid} created — the admin office will reply here.", "ok")
+    return redirect(url_for("student_ticket_thread", ticket_id=tid))
+
+
+@app.route("/student/tickets/<int:ticket_id>")
+@role_required("student")
+def student_ticket_thread(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket or ticket["student_id"] != session.get("student_id"):
+        abort(404)
+    return render_template("student_ticket.html", ticket=ticket,
+                           messages=_ticket_messages(db, ticket_id))
+
+
+@app.route("/student/tickets/<int:ticket_id>/reply", methods=["POST"])
+@role_required("student")
+def student_ticket_reply(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket or ticket["student_id"] != session.get("student_id"):
+        abort(404)
+    if ticket["status"] == "Closed":
+        flash("This ticket is Closed — replies are no longer accepted. "
+              "Please open a new ticket if you still need help.", "error")
+        return redirect(url_for("student_ticket_thread", ticket_id=ticket_id))
+    body = request.form.get("message", "").strip()
+    if not body:
+        flash("Please write a message first.", "error")
+        return redirect(url_for("student_ticket_thread", ticket_id=ticket_id))
+    _add_ticket_message(db, ticket, "student", ticket["student_name"], body)
+    db.commit()
+    flash("Reply posted.", "ok")
+    return redirect(url_for("student_ticket_thread", ticket_id=ticket_id))
+
+
+@app.route("/student/tickets/<int:ticket_id>/close", methods=["POST"])
+@role_required("student")
+def student_ticket_close(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket or ticket["student_id"] != session.get("student_id"):
+        abort(404)
+    if ticket["status"] != "Resolved":
+        flash("Only a Resolved ticket can be closed.", "error")
+        return redirect(url_for("student_ticket_thread", ticket_id=ticket_id))
+    db.execute("UPDATE tickets SET status='Closed', updated_at=? WHERE id=?",
+               (_now(), ticket_id))
+    db.commit()
+    flash(f"Ticket #{ticket_id} closed. Thank you!", "ok")
+    return redirect(url_for("student_dashboard", tab="tickets"))
+
+
+@app.route("/admin/tickets")
+@role_required("admin")
+def admin_tickets():
+    db = get_db()
+    status = request.args.get("status", "")
+    category = request.args.get("category", "")
+    sql = """SELECT t.*, s.name student_name, s.registration_no
+             FROM tickets t JOIN students s ON s.id=t.student_id WHERE 1=1"""
+    params = []
+    if status in TICKET_STATUSES:
+        sql += " AND t.status=?"
+        params.append(status)
+    if category in TICKET_CATEGORIES:
+        sql += " AND t.category=?"
+        params.append(category)
+    sql += " ORDER BY t.updated_at DESC, t.id DESC"
+    rows = db.execute(sql, params).fetchall()
+    counts = {r["status"]: r["c"] for r in db.execute(
+        "SELECT status, COUNT(*) c FROM tickets GROUP BY status").fetchall()}
+    return render_template("admin_tickets.html", rows=rows, counts=counts,
+                           ticket_statuses=TICKET_STATUSES,
+                           ticket_categories=TICKET_CATEGORIES, args=request.args)
+
+
+@app.route("/admin/tickets/<int:ticket_id>")
+@role_required("admin")
+def admin_ticket_thread(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket:
+        abort(404)
+    return render_template("admin_ticket.html", ticket=ticket,
+                           messages=_ticket_messages(db, ticket_id),
+                           ticket_statuses=TICKET_STATUSES)
+
+
+@app.route("/admin/tickets/<int:ticket_id>/reply", methods=["POST"])
+@role_required("admin")
+def admin_ticket_reply(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket:
+        abort(404)
+    body = request.form.get("message", "").strip()
+    if not body:
+        flash("Please write a reply first.", "error")
+        return redirect(url_for("admin_ticket_thread", ticket_id=ticket_id))
+    _add_ticket_message(db, ticket, "admin",
+                        session.get("display_name") or "Admin", body)
+    db.commit()
+    flash("Reply posted — the student can see it in their Support Tickets tab.", "ok")
+    return redirect(url_for("admin_ticket_thread", ticket_id=ticket_id))
+
+
+@app.route("/admin/tickets/<int:ticket_id>/status", methods=["POST"])
+@role_required("admin")
+def admin_ticket_status(ticket_id):
+    db = get_db()
+    ticket = _ticket_full(db, ticket_id)
+    if not ticket:
+        abort(404)
+    status = request.form.get("status", "").strip()
+    if status not in TICKET_STATUSES:
+        flash("Invalid ticket status.", "error")
+        return redirect(url_for("admin_ticket_thread", ticket_id=ticket_id))
+    db.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
+               (status, _now(), ticket_id))
+    db.commit()
+    flash(f"Ticket #{ticket_id} is now {status}.", "ok")
+    return redirect(url_for("admin_ticket_thread", ticket_id=ticket_id))
+
+
+# ------------------------------------------------------ notifications admin
+@app.route("/admin/notifications")
+@role_required("admin")
+def admin_notifications():
+    rows = get_db().execute(
+        "SELECT * FROM notifications ORDER BY id DESC").fetchall()
+    return render_template("admin_notifications.html", rows=rows)
+
+
+def _notification_form_values(form):
+    return (form.get("title", "").strip(), form.get("body", "").strip(),
+            form.get("audience", "All").strip(),
+            1 if form.get("is_published") else 0)
+
+
+@app.route("/admin/notifications/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_notification_new():
+    db = get_db()
+    if request.method == "POST":
+        title, body, audience, published = _notification_form_values(request.form)
+        if audience not in NOTIF_AUDIENCES:
+            audience = "All"
+        if not title or not body:
+            flash("Notification title and body are required.", "error")
+        else:
+            db.insert(
+                """INSERT INTO notifications (title,body,published_at,audience,
+                   is_published,created_by,created_at) VALUES (?,?,?,?,?,?,?)""",
+                (title, body, _today(), audience, published,
+                 session.get("display_name"), _now()))
+            db.commit()
+            flash(f"Notification '{title}' saved.", "ok")
+            return redirect(url_for("admin_notifications"))
+    return render_template("notification_form.html", notif=None,
+                           audiences=NOTIF_AUDIENCES)
+
+
+@app.route("/admin/notifications/<int:notif_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_notification_edit(notif_id):
+    db = get_db()
+    notif = db.execute("SELECT * FROM notifications WHERE id=?", (notif_id,)).fetchone()
+    if not notif:
+        flash("Notification not found.", "error")
+        return redirect(url_for("admin_notifications"))
+    if request.method == "POST":
+        title, body, audience, published = _notification_form_values(request.form)
+        if audience not in NOTIF_AUDIENCES:
+            audience = "All"
+        if not title or not body:
+            flash("Notification title and body are required.", "error")
+        else:
+            db.execute(
+                """UPDATE notifications SET title=?, body=?, audience=?, is_published=?,
+                   published_at=? WHERE id=?""",
+                (title, body, audience, published,
+                 _today() if published else notif.get("published_at"), notif_id))
+            db.commit()
+            flash(f"Notification '{title}' updated.", "ok")
+            return redirect(url_for("admin_notifications"))
+    return render_template("notification_form.html", notif=notif,
+                           audiences=NOTIF_AUDIENCES)
+
+
+@app.route("/admin/notifications/<int:notif_id>/toggle", methods=["POST"])
+@role_required("admin")
+def admin_notification_toggle(notif_id):
+    db = get_db()
+    notif = db.execute("SELECT * FROM notifications WHERE id=?", (notif_id,)).fetchone()
+    if not notif:
+        flash("Notification not found.", "error")
+        return redirect(url_for("admin_notifications"))
+    new_state = 0 if notif.get("is_published") else 1
+    db.execute(
+        "UPDATE notifications SET is_published=?, published_at=? WHERE id=?",
+        (new_state, _today() if new_state else notif.get("published_at"), notif_id))
+    db.commit()
+    flash(f"Notification '{notif['title']}' is now "
+          f"{'Published' if new_state else 'Unpublished'}.", "ok")
+    return redirect(url_for("admin_notifications"))
+
+
+@app.route("/admin/notifications/<int:notif_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_notification_delete(notif_id):
+    db = get_db()
+    notif = db.execute("SELECT * FROM notifications WHERE id=?", (notif_id,)).fetchone()
+    if not notif:
+        flash("Notification not found.", "error")
+        return redirect(url_for("admin_notifications"))
+    db.execute("DELETE FROM notifications WHERE id=?", (notif_id,))
+    db.commit()
+    flash(f"Notification '{notif['title']}' deleted.", "ok")
+    return redirect(url_for("admin_notifications"))
+
+
+# ------------------------------------------------------- document repository
+@app.route("/admin/repository")
+@role_required("admin")
+def admin_repository():
+    rows = get_db().execute(
+        "SELECT id,title,category,description,file_name,file_mime,uploaded_by,"
+        "created_at,is_published FROM repository_docs ORDER BY id DESC").fetchall()
+    return render_template("admin_repository.html", rows=rows,
+                           repo_categories=REPO_CATEGORIES)
+
+
+@app.route("/admin/repository/upload", methods=["POST"])
+@role_required("admin")
+def admin_repository_upload():
+    db = get_db()
+    title = request.form.get("title", "").strip()
+    category = request.form.get("category", "").strip()
+    description = request.form.get("description", "").strip()
+    if category not in REPO_CATEGORIES:
+        category = "Other"
+    if not title:
+        flash("A title is required for the repository document.", "error")
+        return redirect(url_for("admin_repository"))
+    f = request.files.get("file")
+    blob, err = _read_upload(f)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("admin_repository"))
+    db.insert(
+        """INSERT INTO repository_docs (title,category,description,file_name,
+           file_mime,file_data,uploaded_by,created_at,is_published)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (title, category, description, f.filename,
+         f.mimetype or "application/octet-stream", blob,
+         session.get("display_name"), _now(),
+         1 if request.form.get("is_published") else 0))
+    db.commit()
+    flash(f"Repository document '{title}' uploaded.", "ok")
+    return redirect(url_for("admin_repository"))
+
+
+@app.route("/admin/repository/<int:doc_id>/toggle", methods=["POST"])
+@role_required("admin")
+def admin_repository_toggle(doc_id):
+    db = get_db()
+    doc = db.execute("SELECT * FROM repository_docs WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        flash("Repository document not found.", "error")
+        return redirect(url_for("admin_repository"))
+    new_state = 0 if doc.get("is_published") else 1
+    db.execute("UPDATE repository_docs SET is_published=? WHERE id=?",
+               (new_state, doc_id))
+    db.commit()
+    flash(f"'{doc['title']}' is now {'Published' if new_state else 'Unpublished'}.", "ok")
+    return redirect(url_for("admin_repository"))
+
+
+@app.route("/admin/repository/<int:doc_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_repository_delete(doc_id):
+    db = get_db()
+    doc = db.execute("SELECT id,title FROM repository_docs WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        flash("Repository document not found.", "error")
+        return redirect(url_for("admin_repository"))
+    db.execute("DELETE FROM repository_docs WHERE id=?", (doc_id,))
+    db.commit()
+    flash(f"Repository document '{doc['title']}' deleted.", "ok")
+    return redirect(url_for("admin_repository"))
+
+
+@app.route("/admin/repository/<int:doc_id>/download")
+@role_required("admin")
+def admin_repository_download(doc_id):
+    doc = get_db().execute(
+        "SELECT * FROM repository_docs WHERE id=?", (doc_id,)).fetchone()
+    if not doc:
+        abort(404)
+    return _serve_blob(doc)
+
+
+@app.route("/student/repository/<int:doc_id>/download")
+@role_required("student")
+def student_repository_download(doc_id):
+    doc = get_db().execute(
+        "SELECT * FROM repository_docs WHERE id=?", (doc_id,)).fetchone()
+    if not doc or not doc.get("is_published"):
+        abort(404)
+    return _serve_blob(doc)
+
+
+# ------------------------------------------------------------ student card
+def build_student_card_pdf(db, student_id):
+    """Student card PDF bytes: one ID-proportioned card on an A4 page
+    (dashed cut line, CUVAS header band in the standard PDF green, photo
+    placeholder, identity fields and a Code39 barcode of the registration
+    number)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas as pdfcanvas
+
+    student = student_full(db, student_id)
+    buf = io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=A4)
+    page_w, page_h = A4
+    green = colors.HexColor("#0b6b3a")
+    dark = colors.HexColor("#175732")
+    grid = colors.HexColor("#b9d2c2")
+    card_w, card_h = 170 * mm, 170 * mm / 1.586  # ID-card proportions
+    x0 = (page_w - card_w) / 2
+    y_top = page_h - 30 * mm
+    y0 = y_top - card_h
+
+    # cut-out guide + card body
+    c.setStrokeColor(grid)
+    c.setDash(4, 3)
+    c.rect(x0 - 4 * mm, y0 - 4 * mm, card_w + 8 * mm, card_h + 8 * mm, stroke=1, fill=0)
+    c.setDash()
+    c.setStrokeColor(green)
+    c.setLineWidth(1.4)
+    c.setFillColor(colors.white)
+    c.rect(x0, y0, card_w, card_h, stroke=1, fill=1)
+
+    # header band
+    band_h = 17 * mm
+    c.setFillColor(green)
+    c.rect(x0, y_top - band_h, card_w, band_h, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(x0 + 6 * mm, y_top - 8 * mm, "MY CUVAS — Campus Management System")
+    c.setFont("Helvetica", 8.5)
+    c.drawString(x0 + 6 * mm, y_top - 13.5 * mm,
+                 "Cholistan University of Veterinary and Animal Sciences")
+    c.setFillColor(dark)
+    c.setFont("Helvetica-Bold", 12.5)
+    c.drawCentredString(x0 + card_w / 2, y_top - band_h - 7 * mm, "STUDENT CARD")
+
+    # photo placeholder (right side)
+    photo_w, photo_h = 26 * mm, 33 * mm
+    photo_x = x0 + card_w - photo_w - 6 * mm
+    photo_y = y_top - band_h - 14 * mm - photo_h
+    c.setStrokeColor(green)
+    c.setLineWidth(0.9)
+    c.rect(photo_x, photo_y, photo_w, photo_h, stroke=1, fill=0)
+    c.setFillColor(dark)
+    c.setFont("Helvetica", 7.5)
+    c.drawCentredString(photo_x + photo_w / 2, photo_y + photo_h / 2 + 2, "PASSPORT")
+    c.drawCentredString(photo_x + photo_w / 2, photo_y + photo_h / 2 - 3.5 * mm, "PHOTO")
+
+    # identity fields (left side)
+    fields = [("Name", student["name"]),
+              ("Registration No", student["registration_no"]),
+              ("CNIC", student.get("cnic") or "—"),
+              ("Program", student["prog_name"] or "—"),
+              ("Department", student["dept_name"] or "—"),
+              ("Session", student["sess_name"] or student.get("session_name") or "—"),
+              ("Blood Group", student.get("blood_group") or "—")]
+    fy = y_top - band_h - 16 * mm
+    for label, value in fields:
+        c.setFillColor(dark)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x0 + 6 * mm, fy, label)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 9)
+        c.drawString(x0 + 36 * mm, fy, str(value)[:52])
+        fy -= 6.2 * mm
+
+    # barcode of the registration number
+    reg = (student["registration_no"] or "").upper()
+    try:
+        from reportlab.graphics.barcode import code39
+        barcode = code39.Standard39(reg, checksum=0, barHeight=11 * mm,
+                                    barWidth=0.42 * mm, gap=0.21 * mm)
+        barcode.drawOn(c, x0 + 6 * mm, y0 + 11 * mm)
+    except Exception:
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x0 + 6 * mm, y0 + 13 * mm, reg)
+    c.setFillColor(dark)
+    c.setFont("Helvetica-Oblique", 8.5)
+    c.drawRightString(x0 + card_w - 6 * mm, y0 + 6 * mm,
+                      "Valid for the duration of the program")
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 8)
+    c.drawString(x0, y0 - 12 * mm,
+                 f"Generated on {_now()} by MY CUVAS (Demo) — system-generated card, "
+                 f"all data shown is fictional demo data.")
+    c.showPage()
+    c.save()
+    buf.seek(0)  # AFTER save() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/card.pdf")
+@role_required("student")
+def student_card_pdf():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        abort(404)
+    return send_file(io.BytesIO(build_student_card_pdf(db, sid)), as_attachment=True,
+                     download_name=f"student-card-{student['registration_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+@app.route("/admin/students/<int:student_id>/card.pdf")
+@role_required("admin")
+def admin_student_card_pdf(student_id):
+    db = get_db()
+    student = student_full(db, student_id)
+    if not student:
+        abort(404)
+    return send_file(io.BytesIO(build_student_card_pdf(db, student_id)),
+                     as_attachment=True,
+                     download_name=f"student-card-{student['registration_no']}.pdf",
                      mimetype="application/pdf")
 
 

@@ -1,0 +1,15 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Notification' if notif else 'New Notification' }}</h2>
+<div class="form-card">
+<form method="post">
+<label>Title</label>
+<input name="title" required value="{{ notif.title if notif else '' }}">
+<label>Body</label>
+<textarea name="body" required rows="5">{{ notif.body if notif else '' }}</textarea>
+<label>Audience</label>
+<select name="audience">{% for a in audiences %}<option {{ 'selected' if notif and (notif.audience or 'All')==a else '' }}>{{ a }}</option>{% endfor %}</select>
+<label class="check"><input type="checkbox" name="is_published" {{ 'checked' if not notif or notif.is_published else '' }}> Published (visible as per audience)</label>
+<div class="form-actions"><button class="btn green" type="submit">Save Notification</button>
+<a class="btn ghost" href="{{ url_for('admin_notifications') }}">Cancel</a></div>
+</form></div>
+{% endblock %}

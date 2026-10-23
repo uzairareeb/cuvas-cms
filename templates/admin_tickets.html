@@ -1,0 +1,20 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Support Tickets</h2></div>
+<p class="muted">Open: <strong>{{ counts.get('Open', 0) }}</strong> · In Process: <strong>{{ counts.get('In Process', 0) }}</strong> · Resolved: <strong>{{ counts.get('Resolved', 0) }}</strong> · Closed: <strong>{{ counts.get('Closed', 0) }}</strong></p>
+
+<form method="get" class="filter-bar">
+<select name="status"><option value="">All statuses</option>
+{% for s in ticket_statuses %}<option value="{{ s }}" {{ 'selected' if args.get('status')==s else '' }}>{{ s }}</option>{% endfor %}</select>
+<select name="category"><option value="">All categories</option>
+{% for cat in ticket_categories %}<option value="{{ cat }}" {{ 'selected' if args.get('category')==cat else '' }}>{{ cat }}</option>{% endfor %}</select>
+<button class="btn green" type="submit">Filter</button>
+<a class="btn ghost" href="{{ url_for('admin_tickets') }}">Reset</a></form>
+
+<table><tr><th>#</th><th>Student</th><th>Category</th><th>Subject</th><th>Status</th><th>Created</th><th>Last Updated</th><th></th></tr>
+{% for t in rows %}<tr><td>{{ t.id }}</td><td>{{ t.student_name }}<br><span class="muted">{{ t.registration_no }}</span></td>
+<td>{{ t.category }}</td><td>{{ t.subject }}</td>
+<td><span class="pill {{ 'paid' if t.status=='Resolved' else 'submitted' if t.status=='Open' else 'split' if t.status=='Closed' else 'pending' }}">{{ t.status }}</span></td>
+<td>{{ t.created_at[:16] if t.created_at else '—' }}</td><td>{{ t.updated_at[:16] if t.updated_at else '—' }}</td>
+<td><a class="btn small ghost" href="{{ url_for('admin_ticket_thread', ticket_id=t.id) }}">Open Thread</a></td></tr>
+{% else %}<tr><td colspan="8">No tickets match.</td></tr>{% endfor %}</table>
+{% endblock %}

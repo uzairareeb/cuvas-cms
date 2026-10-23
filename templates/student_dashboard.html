@@ -13,14 +13,23 @@
   <button class="tab-btn" data-tab="voucher">Financial Voucher</button>
   <button class="tab-btn" data-tab="feeplan">Fee Plan &amp; Scholarships</button>
   <button class="tab-btn" data-tab="statement">Account Statement</button>
+  <button class="tab-btn" data-tab="documents">My Documents</button>
+  <button class="tab-btn" data-tab="tickets">Support Tickets</button>
 </div>
 
 <section class="tab-pane" id="pane-news"><div class="grid">
 {% for n in news %}<div class="card"><h3>{{ n.title }}</h3><p>{{ n.body }}</p><p class="muted">{{ n.published_at }}</p></div>{% endfor %}
+</div>
+<div class="card" style="margin-top:16px"><h3>Document Repository — Official Circulars &amp; Notifications</h3>
+{% if repo_docs %}<table><tr><th>Title</th><th>Category</th><th>Description</th><th>File</th><th>Published</th><th></th></tr>
+{% for d in repo_docs %}<tr><td>{{ d.title }}</td><td>{{ d.category }}</td><td>{{ d.description or '—' }}</td><td>{{ d.file_name }}</td><td>{{ d.created_at[:10] if d.created_at else '—' }}</td>
+<td><a class="btn small green" href="{{ url_for('student_repository_download', doc_id=d.id) }}">⬇ Download</a></td></tr>{% endfor %}</table>
+{% else %}<p class="muted">No repository documents have been published yet.</p>{% endif %}
 </div></section>
 
 <section class="tab-pane" id="pane-profile"><div class="card">
 <h3>Personal &amp; Academic Profile</h3>
+<p><a class="btn green" href="{{ url_for('student_card_pdf') }}">⬇ Download Student Card (PDF)</a></p>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
 <tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>
@@ -90,10 +99,44 @@
 {% for l in ledger %}<tr><td>{{ l.voucher_title }}</td><td>{{ l.challan_no }}</td><td>{{ l.entry_date }}</td><td>{{ l.description }}</td><td>{{ "{:,}".format(l.debit) if l.debit else '—' }}</td><td>{{ "{:,}".format(l.credit) if l.credit else '—' }}</td></tr>{% endfor %}</table>
 <p style="margin-top:14px">Payable: <strong>Rs {{ "{:,}".format(payable) }}</strong> · Paid: <strong>Rs {{ "{:,}".format(paid) }}</strong> · Remission: <strong>Rs 0</strong> · Outstanding: <strong>Rs {{ "{:,}".format(outstanding) }}</strong></p>
 </div></section>
+
+<section class="tab-pane" id="pane-documents"><div class="card"><h3>My Documents</h3>
+<p class="muted">Upload clear scans of your documents (images or PDF, up to 5 MB each). The admin office verifies each document; a <strong>Verified</strong> document is locked and cannot be replaced or deleted. To replace a Pending or Rejected document, choose the same type below and upload again.</p>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('student_document_upload') }}" class="proof-form">
+<label>Document type:</label>
+<select name="doc_type">{% for t in doc_types %}<option>{{ t }}</option>{% endfor %}</select>
+<input type="file" name="file" required>
+<button class="btn small green" type="submit">Upload Document</button></form>
+<table style="margin-top:14px"><tr><th>Document</th><th>File</th><th>Status</th><th>Admin Remarks</th><th>Uploaded</th><th>Actions</th></tr>
+{% for d in my_documents %}<tr><td>{{ d.doc_type }}</td><td>{{ d.file_name }}</td>
+<td><span class="pill {{ 'paid' if d.status=='Verified' else 'rejected' if d.status=='Rejected' else 'pending' }}">{{ d.status }}</span>{% if d.status=='Verified' %}<br><span class="muted">🔒 Verified — locked</span>{% endif %}</td>
+<td>{{ d.admin_remarks or '—' }}</td><td>{{ d.uploaded_at[:10] if d.uploaded_at else '—' }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('student_document_download', doc_id=d.id) }}">Download</a>
+{% if d.status!='Verified' %}<form method="post" action="{{ url_for('student_document_delete', doc_id=d.id) }}" onsubmit="return confirm('Delete this {{ d.doc_type }} upload?');"><button class="btn small danger" type="submit">Delete</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6">No documents uploaded yet.</td></tr>{% endfor %}</table>
+</div></section>
+
+<section class="tab-pane" id="pane-tickets"><div class="card"><h3>Support Tickets</h3>
+<p class="muted">Raise a ticket for fee, result, admission, login or hostel matters — the admin office replies in the same thread.</p>
+<form method="post" action="{{ url_for('student_ticket_new') }}">
+<label>Category</label>
+<select name="category" style="width:100%;padding:11px;border:1px solid #c9dcd1;border-radius:9px;margin:6px 0 14px">{% for cat in ticket_categories %}<option>{{ cat }}</option>{% endfor %}</select>
+<label>Subject</label>
+<input name="subject" required maxlength="200" placeholder="e.g. Challan not visible in my account">
+<label>Message</label>
+<textarea name="message" required rows="4" style="width:100%;padding:11px;border:1px solid #c9dcd1;border-radius:9px;margin:6px 0 14px;font-family:inherit" placeholder="Describe your issue in detail…"></textarea>
+<button class="btn green" type="submit">Create Ticket</button></form>
+<table style="margin-top:16px"><tr><th>#</th><th>Category</th><th>Subject</th><th>Status</th><th>Last Updated</th><th></th></tr>
+{% for t in my_tickets %}<tr><td>{{ t.id }}</td><td>{{ t.category }}</td><td>{{ t.subject }}</td>
+<td><span class="pill {{ 'paid' if t.status=='Resolved' else 'submitted' if t.status=='Open' else 'split' if t.status=='Closed' else 'pending' }}">{{ t.status }}</span></td>
+<td>{{ t.updated_at[:16] if t.updated_at else '—' }}</td>
+<td><a class="btn small ghost" href="{{ url_for('student_ticket_thread', ticket_id=t.id) }}">Open Thread</a></td></tr>
+{% else %}<tr><td colspan="6">No tickets yet.</td></tr>{% endfor %}</table>
+</div></section>
 </div>
 <script>
 var active = {{ active_tab|tojson }};
-var valid = ['news','profile','enrollments','plan','transcript','voucher','feeplan','statement'];
+var valid = ['news','profile','enrollments','plan','transcript','voucher','feeplan','statement','documents','tickets'];
 function show(t){ if(valid.indexOf(t)<0) t='news';
  document.querySelectorAll('.tab-pane').forEach(function(p){p.classList.remove('active')});
  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active', b.dataset.tab===t)});

@@ -19,6 +19,7 @@
 {% for s in rows %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.cnic or '—' }}</td><td>{{ s.dept or '—' }}</td><td>{{ s.prog or '—' }}</td><td>{{ s.sess or s.session_name or '—' }}</td><td>{{ s.current_semester or '—' }}</td><td>{{ s.status or '—' }}</td>
 <td class="actions"><a class="btn small ghost" href="{{ url_for('admin_student_edit', student_id=s.id) }}">Edit</a>
 <a class="btn small ghost" href="{{ url_for('admin_student_transcript_pdf', student_id=s.id) }}">Transcript PDF</a>
+<a class="btn small ghost" href="{{ url_for('admin_student_card_pdf', student_id=s.id) }}">Card PDF</a>
 <a class="btn small ghost" href="{{ url_for('admin_student_slip_pdf', student_id=s.id) }}">Roll Slip PDF</a>
 <form method="post" action="{{ url_for('admin_student_reset_password', student_id=s.id) }}" onsubmit="return confirm('Reset password for {{ s.registration_no }}? The new password is shown once.');"><button class="btn small" type="submit">Reset Password</button></form>
 <form method="post" action="{{ url_for('admin_student_delete', student_id=s.id) }}" onsubmit="return confirm('Delete student {{ s.name }} and their login?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>

@@ -1,0 +1,21 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<p><a href="{{ url_for('admin_tickets') }}">← All tickets</a></p>
+<div class="toolbar"><h2>Ticket #{{ ticket.id }} — {{ ticket.subject }}</h2>
+<span class="pill {{ 'paid' if ticket.status=='Resolved' else 'submitted' if ticket.status=='Open' else 'split' if ticket.status=='Closed' else 'pending' }}">{{ ticket.status }}</span></div>
+<p class="muted">{{ ticket.student_name }} ({{ ticket.registration_no }}) · Category: {{ ticket.category }} · Created {{ ticket.created_at[:16] if ticket.created_at else '—' }} · Last updated {{ ticket.updated_at[:16] if ticket.updated_at else '—' }}</p>
+
+{% for msg in messages %}<div class="thread-msg {{ 'admin' if msg.sender_role=='admin' else '' }}">
+<div class="meta"><strong>{{ msg.sender_name }}</strong> ({{ msg.sender_role }}) · {{ msg.created_at[:16] if msg.created_at else '' }}</div>
+<div>{{ msg.body }}</div></div>{% endfor %}
+
+<div class="form-card wide" style="margin-top:16px">
+<form method="post" action="{{ url_for('admin_ticket_reply', ticket_id=ticket.id) }}">
+<label>Reply to student</label>
+<textarea name="message" required rows="4" placeholder="Write your reply…"></textarea>
+<div class="form-actions"><button class="btn green" type="submit">Post Reply</button></div></form>
+<form method="post" action="{{ url_for('admin_ticket_status', ticket_id=ticket.id) }}" style="margin-top:14px">
+<label>Set status</label>
+<select name="status">{% for s in ticket_statuses %}<option {{ 'selected' if ticket.status==s else '' }}>{{ s }}</option>{% endfor %}</select>
+<div class="form-actions"><button class="btn ghost" type="submit">Update Status</button></div></form>
+</div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Notifications</h2>
+<a class="btn green" href="{{ url_for('admin_notification_new') }}">+ New Notification</a></div>
+<p class="muted">Published notifications with audience <strong>All</strong> or <strong>Students</strong> appear on the landing page and in every student's News Feed. Audience <strong>Admins</strong> items are kept here for the office only.</p>
+
+<table><tr><th>Title</th><th>Body</th><th>Audience</th><th>Status</th><th>Date</th><th>By</th><th>Actions</th></tr>
+{% for n in rows %}<tr><td>{{ n.title }}</td><td>{{ n.body }}</td><td>{{ n.audience or 'All' }}</td>
+<td><span class="pill {{ 'paid' if n.is_published else 'pending' }}">{{ 'Published' if n.is_published else 'Unpublished' }}</span></td>
+<td>{{ n.published_at or '—' }}</td><td>{{ n.created_by or '—' }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_notification_edit', notif_id=n.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_notification_toggle', notif_id=n.id) }}"><button class="btn small" type="submit">{{ 'Unpublish' if n.is_published else 'Publish' }}</button></form>
+<form method="post" action="{{ url_for('admin_notification_delete', notif_id=n.id) }}" onsubmit="return confirm('Delete notification {{ n.title }}?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No notifications yet.</td></tr>{% endfor %}</table>
+{% endblock %}

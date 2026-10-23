@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.4
+# MY CUVAS — Campus Management System (Demo) v0.6
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -8,7 +8,11 @@ fee heads + fee plans, voucher generation (single + bulk) with sequential
 challan numbers, challan PDF (ReportLab), 2-installment splits, paid-proof
 upload (stored as a database blob), admin verify/reject, and a real
 append-only ledger behind the Account Statement. **Step 9 (v0.4)** adds the
-results & exams system — see the v0.4 section below.
+results & exams system, and **Step 10 (v0.6)** adds the student-services
+pack — document verification, support tickets, notifications admin, the
+document repository and the student card PDF — see the v0.6 section below.
+(The v0.5 navy redesign was rolled back at the user's request; the UI is
+still the original v0.4 green/teal+gold theme.)
 
 ## Database (Step 6)
 
@@ -74,11 +78,12 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
     (marks Paid, writes the ledger credit exactly once) / **Reject** (back to Pending,
     remark shown to the student), Create 2 Installments, ledger entries for the voucher
   - `/admin/vouchers/<id>/challan.pdf` — challan PDF
-- `/student` — student dashboard (8 tabs) serving the logged-in student's own real record:
+- `/student` — student dashboard (10 tabs since v0.6) serving the logged-in student's own real record:
   News Feed, Profile, Course Enrollments, Plan Of Study, Transcript (SGPA/CGPA computed),
   Financial Voucher (download challan PDF, create 2 installments, upload paid proof with
   payment channel), Fee Plan & Scholarships (the student's applicable real fee plan),
-  Account Statement (real ledger with Total Payable / Paid / Outstanding)
+  Account Statement (real ledger with Total Payable / Paid / Outstanding),
+  **My Documents** and **Support Tickets** (v0.6 — see below)
 
 ### Fee-system ledger rules
 
@@ -118,6 +123,49 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   the semester's course table (enrollments → results → plan of study) and
   generic exam instructions.
 
+## Student Services (Step 10, v0.6)
+
+- **My Documents** (student tab): upload per type — CNIC Front, CNIC Back,
+  Matric Certificate, Intermediate Certificate, Domicile, Passport Photo,
+  Other. Images + PDF only, ≤ 5 MB, stored **as a database blob**
+  (`student_documents.file_data`, BYTEA/BLOB) — never on the filesystem.
+  One row per student + type: re-uploading a Pending/Rejected document
+  replaces it and returns it to Pending; a **Verified document is locked**
+  (no replace, no delete). Students download only their own files
+  (`/student/documents/<id>/download`; anyone else's → 404).
+- **Admin → Documents** (`/admin/documents`): status counts, status filter +
+  student search, pending first; per-row View/Download, **Verify** and
+  **Reject with remarks** (reviewer + timestamp recorded; the remark shows
+  on the student's dashboard).
+- **Support Tickets**: student tab to create a ticket (categories: Fee,
+  Result, Admission, IT / Login, Hostel, Other) and follow the thread at
+  `/student/tickets/<id>`; statuses Open → In Process → Resolved → Closed.
+  The student may reply while the ticket is not Closed and may close their
+  own Resolved ticket; a Closed ticket rejects new replies.
+  **Admin → Tickets** (`/admin/tickets`) filters by status + category, with
+  the same thread view, reply box and status control.
+- **Notifications**: the original v0.1 `notifications` table is now the
+  single source for the landing page **and** the student News Feed,
+  extended additively (`audience` All/Students/Admins, `is_published`,
+  `created_by`, `created_at` — existing announcements keep showing).
+  **Admin → Notifications** (`/admin/notifications`): create / edit /
+  delete + publish toggle. Only published All/Students items are public;
+  Admins-audience items never reach the landing page or student feed.
+- **Document Repository**: **Admin → Repository** (`/admin/repository`)
+  uploads official Circulars / Notifications / Policies / Forms (blob
+  storage, same upload rules) with publish toggle + delete. Published
+  items are listed in the student's News Feed tab with a download button;
+  unpublished items are invisible to students and their download route
+  returns 404 for students.
+- **Student Card PDF**: `/student/card.pdf` (own card) and
+  `/admin/students/<id>/card.pdf` — one ID-proportioned card on an A4 page
+  with a dashed cut line, the green CUVAS header band used by the other
+  PDFs, a passport-photo placeholder, Name / Registration No / CNIC /
+  Program / Department / Session / Blood Group, a **Code39 barcode of the
+  registration number**, and the line “Valid for the duration of the
+  program”. Buttons: Profile tab of the student dashboard and the admin
+  student list (“Card PDF”).
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -137,6 +185,21 @@ CGPA == web CGPA, slip page counts, cross-student guards, demo transcript
 intact). v0.4 result: **all three suites ALL PASS on both backends**, and the
 v0.4 migration (`backfill_v04`: grade-band seed + legacy results published) is
 a no-op on second boot.
+`verify_v06.py` adds a 72-check pass over Step 10 (document upload stored as
+bytes + Pending, reject-with-remarks visible to the student, re-upload
+replacement, Verified lock against replace/delete, cross-student download
+404, ticket create → admin reply → status flow → student close → closed
+ticket rejects replies, notification publish/audience visibility on landing
++ News Feed, repository published-only access, card PDF for self/admin with
+cross-student guards, original 8 tab labels byte-identical + 2 new tabs).
+v0.6 result: **all four suites ALL PASS on both backends** (SQLite: 43 + 52
++ 60 + 72; PostgreSQL identical). Note: the three older suites each had one
+assertion updated — the demo dashboard tab count 8 → 10 — because Step 10
+adds the My Documents and Support Tickets tabs; the original 8 labels are
+asserted byte-identical in `verify_v06.py`. The v0.6 migration (new tables +
+additive notification columns, `backfill_v06` created_at backfill) was also
+verified against a simulated v0.4-era database: it boots cleanly, keeps the
+seeded announcements, and is a no-op on second boot.
 
 ## On Vercel
 
@@ -144,8 +207,8 @@ a no-op on second boot.
 Preset: Flask). Without `DATABASE_URL`, Vercel uses an ephemeral SQLite DB under
 `/tmp` that re-seeds on cold start; set `DATABASE_URL` (Neon) for real data.
 
-## Not in v0.4
+## Not in v0.6
 
-Documents upload/verification, tickets, notifications admin, repository,
-student card PDF, faculty/dept/accounts/COE portals — later Phase 1 steps
-(see `../architecture.md`).
+Faculty portal, clearance, scholarships application flow, course repeat,
+timetable, surveys, dept/accounts/COE portals — Phase 2 (see
+`../architecture.md`).

@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Student Documents</h2></div>
+<p class="muted">Pending: <strong>{{ counts.get('Pending', 0) }}</strong> · Verified: <strong>{{ counts.get('Verified', 0) }}</strong> · Rejected: <strong>{{ counts.get('Rejected', 0) }}</strong> — pending documents are listed first.</p>
+
+<form method="get" class="filter-bar">
+<select name="status"><option value="">All statuses</option>
+{% for s in doc_statuses %}<option value="{{ s }}" {{ 'selected' if args.get('status')==s else '' }}>{{ s }}</option>{% endfor %}</select>
+<input name="q" placeholder="Search student name / reg. no" value="{{ args.get('q','') }}" style="min-width:240px">
+<button class="btn green" type="submit">Filter</button>
+<a class="btn ghost" href="{{ url_for('admin_documents') }}">Reset</a></form>
+
+<table><tr><th>Student</th><th>Document</th><th>File</th><th>Status</th><th>Uploaded</th><th>Reviewed</th><th>Actions</th></tr>
+{% for d in rows %}<tr><td>{{ d.student_name }}<br><span class="muted">{{ d.registration_no }}</span></td>
+<td>{{ d.doc_type }}</td><td>{{ d.file_name }}</td>
+<td><span class="pill {{ 'paid' if d.status=='Verified' else 'rejected' if d.status=='Rejected' else 'pending' }}">{{ d.status }}</span>
+{% if d.admin_remarks %}<br><span class="muted">{{ d.admin_remarks }}</span>{% endif %}</td>
+<td>{{ d.uploaded_at[:16] if d.uploaded_at else '—' }}</td>
+<td>{{ (d.reviewed_by ~ ' · ' ~ d.reviewed_at[:10]) if d.reviewed_at else '—' }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_document_download', doc_id=d.id) }}">View / Download</a>
+<form method="post" action="{{ url_for('admin_document_verify', doc_id=d.id) }}">
+<input name="remarks" placeholder="Remarks (optional)" style="width:170px;margin:0;padding:6px">
+<button class="btn small green" type="submit">Verify</button></form>
+<form method="post" action="{{ url_for('admin_document_reject', doc_id=d.id) }}">
+<input name="remarks" placeholder="Reason for rejection" style="width:170px;margin:0;padding:6px">
+<button class="btn small danger" type="submit">Reject</button></form></td></tr>
+{% else %}<tr><td colspan="7">No documents match.</td></tr>{% endfor %}</table>
+{% endblock %}

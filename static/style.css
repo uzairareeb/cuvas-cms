@@ -16,6 +16,9 @@ a{color:var(--green);text-decoration:none}
 table{width:100%;border-collapse:collapse;background:#fff}th{background:#eaf5ee;text-align:left;padding:10px;border-bottom:2px solid var(--line)}td{padding:9px 10px;border-bottom:1px solid var(--line)}
 .pill{padding:3px 11px;border-radius:20px;font-size:12px;font-weight:700}.paid{background:#dff5e6;color:var(--green)}.pending{background:#fff3cd;color:var(--amber)}
 .submitted{background:#dbeafe;color:#1d4ed8}.split{background:#ece7f7;color:#5b3ea8}
+.rejected{background:#fdecea;color:var(--red)}
+.thread-msg{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff}
+.thread-msg.admin{background:#eaf5ee}.thread-msg .meta{font-size:12px;color:var(--muted);margin-bottom:4px}
 .proof-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .proof-form input[type=file]{width:auto;margin:0;padding:6px}
 .proof-form select{padding:8px;border:1px solid #c9dcd1;border-radius:9px;width:auto;margin:0}
