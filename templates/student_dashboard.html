@@ -31,6 +31,7 @@
 <h3>Personal &amp; Academic Profile</h3>
 <p><a class="btn green" href="{{ url_for('student_card_pdf') }}">⬇ Download Student Card (PDF)</a></p>
 <p><a class="btn" href="{{ url_for('student_clearance') }}">✅ My Clearance</a></p>
+<p><a class="btn" href="{{ url_for('student_transport') }}">🚌 Transport</a></p>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
 <tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>
@@ -50,6 +51,7 @@
 
 <section class="tab-pane" id="pane-enrollments"><div class="card"><h3>Course Enrollments — Semester {{ student.current_semester }}</h3>
 <p><a class="btn green" href="{{ url_for('student_attendance') }}">📅 My Attendance</a></p>
+<p><a class="btn" href="{{ url_for('student_timetable') }}">🗓 View Time Table</a></p>
 <table><tr><th>SR</th><th>Semester Session</th><th>Course Code</th><th>Course</th><th>Faculty</th><th>Credit Hours (Theory-Lab)</th></tr>
 {% for e in enrollments %}<tr><td>{{ loop.index }}</td><td>{{ e.session_name }}</td><td>{{ e.code }}</td><td>{{ e.title }}</td><td>{{ e.faculty_name }}</td><td>{{ e.credit_theory }}-{{ e.credit_lab }}</td></tr>{% endfor %}</table></div></section>
 

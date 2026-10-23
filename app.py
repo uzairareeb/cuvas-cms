@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.11
+MY CUVAS — Campus Management System (Demo) v0.12
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -66,6 +66,17 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      transcript counts ONLY the latest attempt of a repeated course
      in SGPA/CGPA (earlier attempts stay visible, flagged 'Repeated');
      transcripts of students without repeats are unchanged.
+ 16. v0.12 timetable + transport — admins build the weekly timetable
+     per program + semester + session (timetable_slots); saving a slot
+     is clash-checked (same class, same teacher or same room already
+     busy at an overlapping time in that session is refused, while
+     back-to-back slots are fine). Students see 'My Time Table' for
+     the current session (only their enrolled courses) on the web and
+     as a PDF; teachers see their own teaching timetable per session.
+     Transport is admin-managed bus routes with ordered pickup stops
+     (transport_routes + transport_stops, seeded with two clearly-demo
+     routes); students browse the active routes and search by stop
+     name.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -342,6 +353,21 @@ DDL = [
         status TEXT DEFAULT 'Requested', admin_remarks TEXT,
         voucher_id INTEGER, decided_by TEXT, decided_at TEXT,
         created_at TEXT)""",
+    # --- v0.12 timetable + transport (new tables only; plain INTEGER
+    # ids like enrollments/results — no REFERENCES, so older migration
+    # simulations stay safe on PG). Times are 'HH:MM' 24-hour text,
+    # which sorts and compares correctly as strings. ---
+    f"""CREATE TABLE IF NOT EXISTS timetable_slots (
+        id {_PK}, program_id INTEGER, semester INTEGER, session_id INTEGER,
+        course_id INTEGER, faculty_id INTEGER,
+        day_of_week TEXT, start_time TEXT, end_time TEXT, room TEXT,
+        created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS transport_routes (
+        id {_PK}, name TEXT NOT NULL, title TEXT, description TEXT,
+        is_active INTEGER DEFAULT 1, created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS transport_stops (
+        id {_PK}, route_id INTEGER, stop_name TEXT NOT NULL,
+        pickup_time TEXT, sort_order INTEGER DEFAULT 0)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -404,6 +430,7 @@ def init_db():
     backfill_v09(db)
     backfill_v10(db)
     backfill_v11(db)
+    backfill_v12(db)
     db.commit()
     db.conn.close()
 
@@ -680,6 +707,42 @@ def backfill_v11(db):
         db.execute(
             "INSERT INTO app_settings (key,value) VALUES (?,?)",
             ("repeat_fee_per_ch", "2000"))
+
+
+# ------------------------------------------------------- v0.12 transport seed
+DEMO_TRANSPORT_ROUTES = [
+    ("Route 1", "Route 1 — City Side",
+     "Demo route — morning pickups on the city side. (Demo data, "
+     "editable by the admin.)",
+     [("Satellite Town", "07:10"), ("Model Town", "07:25"),
+      ("Cantt", "07:40"), ("Main Gate", "07:55"),
+      ("CUVAS Campus", "08:10")]),
+    ("Route 2", "Route 2 — Hasilpur Road Side",
+     "Demo route — morning pickups along Hasilpur Road. (Demo data, "
+     "editable by the admin.)",
+     [("Hasilpur Road Chowk", "07:15"), ("University Chowk", "07:35"),
+      ("Main Gate", "07:55"), ("CUVAS Campus", "08:10")]),
+]
+
+
+def backfill_v12(db):
+    """Idempotent v0.12 seed: two clearly-labelled demo transport
+    routes with their stops, ONLY while the routes table is empty.
+    A strict no-op afterwards, so admin edits/deletions are never
+    undone. (No timetable seed: the demo data has no canonical class
+    timings to invent — the admin builds the timetable.)"""
+    if db.execute("SELECT COUNT(*) c FROM transport_routes").fetchone()["c"]:
+        return
+    for name, title, description, stops in DEMO_TRANSPORT_ROUTES:
+        rid = db.insert(
+            """INSERT INTO transport_routes (name,title,description,
+               is_active,created_at) VALUES (?,?,?,?,?)""",
+            (name, title, description, 1, _now()))
+        for i, (stop_name, pickup_time) in enumerate(stops, start=1):
+            db.insert(
+                """INSERT INTO transport_stops (route_id,stop_name,
+                   pickup_time,sort_order) VALUES (?,?,?,?)""",
+                (rid, stop_name, pickup_time, i))
 
 
 def _today():
@@ -5965,6 +6028,633 @@ def admin_repeat_reject(req_id):
     db.commit()
     flash("Repeat request rejected.", "ok")
     return back
+
+
+# ================================================================ v0.12 TIMETABLE + TRANSPORT
+# Timetable: one slot = one weekly class meeting of a course, placed by
+# the admin per program + semester + session. Saving is clash-checked
+# (see timetable_clashes). Transport: admin-managed routes with ordered
+# pickup stops; students see active routes only and can search by stop.
+
+TIMETABLE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday",
+                  "Friday", "Saturday"]
+_DAY_INDEX = {d: i for i, d in enumerate(TIMETABLE_DAYS)}
+
+
+def _clean_time(raw):
+    """Normalize a time input to zero-padded 'HH:MM' (24h), or None."""
+    m = re.match(r"^(\d{1,2}):(\d{2})$", (raw or "").strip())
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        return None
+    return f"{h:02d}:{mi:02d}"
+
+
+def _group_slots_by_day(rows):
+    """[(day, [slots...]), ...] in Monday..Saturday order, non-empty
+    days only; slots inside a day sorted by start time."""
+    rows = sorted(rows, key=lambda r: (_DAY_INDEX.get(r["day_of_week"], 99),
+                                       r["start_time"] or ""))
+    return [(d, [r for r in rows if r["day_of_week"] == d])
+            for d in TIMETABLE_DAYS if any(r["day_of_week"] == d
+                                            for r in rows)]
+
+
+def timetable_clashes(db, cand, exclude_id=None):
+    """Friendly clash messages for a candidate slot dict (keys:
+    program_id, semester, session_id, faculty_id, day_of_week,
+    start_time, end_time, room). Two slots overlap when they share the
+    session + day and new_start < existing_end AND existing_start <
+    new_end ('HH:MM' strings compare correctly) — so a slot that starts
+    exactly when another ends (back-to-back) is NOT a clash. The slot
+    being edited (exclude_id) never clashes with itself."""
+    rows = db.execute(
+        """SELECT ts.*, c.code course_code FROM timetable_slots ts
+           JOIN courses c ON c.id=ts.course_id
+           WHERE ts.session_id=? AND ts.day_of_week=?
+             AND ts.start_time < ? AND ? < ts.end_time""",
+        (cand["session_id"], cand["day_of_week"],
+         cand["end_time"], cand["start_time"])).fetchall()
+    msgs = []
+    room_key = (cand.get("room") or "").strip().lower()
+    for r in rows:
+        if exclude_id and r["id"] == exclude_id:
+            continue
+        when = f"{r['day_of_week']} {r['start_time']}–{r['end_time']}"
+        if (r["program_id"] == cand["program_id"]
+                and r["semester"] == cand["semester"]):
+            msgs.append(
+                f"Class clash: this class (same program + semester) "
+                f"already has {r['course_code']} on {when} in this "
+                f"session.")
+        if cand.get("faculty_id") and r.get("faculty_id") == cand["faculty_id"]:
+            msgs.append(
+                f"Teacher clash: the selected teacher already teaches "
+                f"{r['course_code']} on {when} in this session.")
+        if room_key and (r["room"] or "").strip().lower() == room_key:
+            msgs.append(
+                f"Room clash: room '{cand['room'].strip()}' is already "
+                f"booked for {r['course_code']} on {when} in this "
+                f"session.")
+    out, seen = [], set()
+    for msg in msgs:
+        if msg not in seen:
+            seen.add(msg)
+            out.append(msg)
+    return out
+
+
+def _slot_form_context(db, prog_id, sem_no, sess_id, course_id=None):
+    """Select options for the slot form for one program+semester: its
+    courses, all faculty, and the teacher to preselect (the course's
+    assigned teacher for the session, when course_id is known)."""
+    courses = db.execute(
+        "SELECT * FROM courses WHERE program_id=? AND semester_no=? "
+        "ORDER BY code", (prog_id, sem_no)).fetchall() \
+        if prog_id and sem_no else []
+    faculty = db.execute(
+        "SELECT id, full_name FROM faculty ORDER BY full_name").fetchall()
+    assigned_faculty_id = None
+    if course_id and sess_id:
+        a = db.execute(
+            "SELECT faculty_id FROM course_assignments "
+            "WHERE course_id=? AND session_id=?",
+            (course_id, sess_id)).fetchone()
+        if a:
+            assigned_faculty_id = a["faculty_id"]
+    return {"courses": courses, "faculty_list": faculty,
+            "assigned_faculty_id": assigned_faculty_id}
+
+
+def _slot_from_form(db, form):
+    """Validate the slot form -> (candidate dict, error message)."""
+    prog_id = _int_or_none(form.get("program_id"))
+    sem_no = _int_or_none(form.get("semester"))
+    sess_id = _int_or_none(form.get("session_id"))
+    course_id = _int_or_none(form.get("course_id"))
+    faculty_id = _int_or_none(form.get("faculty_id"))
+    day = (form.get("day_of_week") or "").strip()
+    start = _clean_time(form.get("start_time"))
+    end = _clean_time(form.get("end_time"))
+    room = (form.get("room") or "").strip()
+    if not (prog_id and sem_no and sess_id and course_id):
+        return None, "Please choose the program, semester, session and course."
+    course = db.execute("SELECT * FROM courses WHERE id=?",
+                        (course_id,)).fetchone()
+    if not course or course["program_id"] != prog_id \
+            or course["semester_no"] != sem_no:
+        return None, "The chosen course does not belong to that program + semester."
+    if day not in TIMETABLE_DAYS:
+        return None, "Please choose a day of the week (Monday to Saturday)."
+    if not start or not end:
+        return None, "Please give valid start and end times (HH:MM)."
+    if end <= start:
+        return None, "The end time must be after the start time."
+    return {"program_id": prog_id, "semester": sem_no,
+            "session_id": sess_id, "course_id": course_id,
+            "faculty_id": faculty_id, "day_of_week": day,
+            "start_time": start, "end_time": end, "room": room}, None
+
+
+# ------------------------------------------------------- timetable (admin)
+@app.route("/admin/timetable")
+@role_required("admin")
+def admin_timetable():
+    db = get_db()
+    programs = program_options(db)
+    sessions = session_options(db)
+    prog_id = _int_or_none(request.args.get("program_id"))
+    if not prog_id and programs:
+        prog_id = programs[0]["id"]
+    sem_no = _int_or_none(request.args.get("semester")) or 1
+    sess = current_session(db)
+    sess_id = _int_or_none(request.args.get("session_id")) \
+        or (sess["id"] if sess else None)
+    rows = []
+    if prog_id and sess_id:
+        rows = db.execute(
+            """SELECT ts.*, c.code course_code, c.title course_title,
+                      f.full_name faculty_name
+               FROM timetable_slots ts
+               JOIN courses c ON c.id=ts.course_id
+               LEFT JOIN faculty f ON f.id=ts.faculty_id
+               WHERE ts.program_id=? AND ts.semester=? AND ts.session_id=?
+               ORDER BY ts.start_time""",
+            (prog_id, sem_no, sess_id)).fetchall()
+    prog_name = next((p["name"] for p in programs if p["id"] == prog_id), "")
+    sess_name = next((s["name"] for s in sessions if s["id"] == sess_id), "")
+    class_courses = db.execute(
+        "SELECT * FROM courses WHERE program_id=? AND semester_no=? "
+        "ORDER BY code", (prog_id, sem_no)).fetchall() if prog_id else []
+    return render_template(
+        "admin_timetable.html", programs=programs, sessions=sessions,
+        prog_id=prog_id, semester=sem_no, sess_id=sess_id,
+        prog_name=prog_name, sess_name=sess_name, courses=class_courses,
+        day_groups=_group_slots_by_day(rows), days=TIMETABLE_DAYS)
+
+
+@app.route("/admin/timetable/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_timetable_new():
+    db = get_db()
+    if request.method == "POST":
+        back = {"program_id": request.args.get("program_id")
+                or request.form.get("program_id"),
+                "semester": request.args.get("semester")
+                or request.form.get("semester"),
+                "session_id": request.args.get("session_id")
+                or request.form.get("session_id")}
+        cand, err = _slot_from_form(db, request.form)
+        if err:
+            flash(err, "error")
+            return redirect(url_for("admin_timetable_new", **back))
+        clashes = timetable_clashes(db, cand)
+        if clashes:
+            for msg in clashes:
+                flash(msg, "error")
+            return redirect(url_for(
+                "admin_timetable_new", program_id=cand["program_id"],
+                semester=cand["semester"], session_id=cand["session_id"],
+                course_id=cand["course_id"]))
+        db.insert(
+            """INSERT INTO timetable_slots (program_id,semester,session_id,
+               course_id,faculty_id,day_of_week,start_time,end_time,room,
+               created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (cand["program_id"], cand["semester"], cand["session_id"],
+             cand["course_id"], cand["faculty_id"], cand["day_of_week"],
+             cand["start_time"], cand["end_time"], cand["room"], _now()))
+        db.commit()
+        flash("Timetable slot added.", "ok")
+        return redirect(url_for(
+            "admin_timetable", program_id=cand["program_id"],
+            semester=cand["semester"], session_id=cand["session_id"]))
+    prog_id = _int_or_none(request.args.get("program_id"))
+    if not prog_id:
+        progs = program_options(db)
+        prog_id = progs[0]["id"] if progs else None
+    sem_no = _int_or_none(request.args.get("semester")) or 1
+    sess = current_session(db)
+    sess_id = _int_or_none(request.args.get("session_id")) \
+        or (sess["id"] if sess else None)
+    course_id = _int_or_none(request.args.get("course_id"))
+    ctx = _slot_form_context(db, prog_id, sem_no, sess_id, course_id)
+    slot = {"program_id": prog_id, "semester": sem_no,
+            "session_id": sess_id, "course_id": course_id,
+            "faculty_id": ctx["assigned_faculty_id"],
+            "day_of_week": "Monday", "start_time": "09:00",
+            "end_time": "10:00", "room": ""}
+    return render_template(
+        "timetable_slot_form.html", slot=slot, is_new=True,
+        programs=program_options(db), sessions=session_options(db),
+        days=TIMETABLE_DAYS, **ctx)
+
+
+@app.route("/admin/timetable/<int:slot_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_timetable_edit(slot_id):
+    db = get_db()
+    slot = db.execute("SELECT * FROM timetable_slots WHERE id=?",
+                      (slot_id,)).fetchone()
+    if not slot:
+        abort(404)
+    back = {"program_id": slot["program_id"], "semester": slot["semester"],
+            "session_id": slot["session_id"]}
+    if request.method == "POST":
+        cand, err = _slot_from_form(db, request.form)
+        if err:
+            flash(err, "error")
+            return redirect(url_for("admin_timetable_edit", slot_id=slot_id))
+        clashes = timetable_clashes(db, cand, exclude_id=slot_id)
+        if clashes:
+            for msg in clashes:
+                flash(msg, "error")
+            return redirect(url_for("admin_timetable_edit", slot_id=slot_id))
+        db.execute(
+            """UPDATE timetable_slots SET program_id=?, semester=?,
+               session_id=?, course_id=?, faculty_id=?, day_of_week=?,
+               start_time=?, end_time=?, room=? WHERE id=?""",
+            (cand["program_id"], cand["semester"], cand["session_id"],
+             cand["course_id"], cand["faculty_id"], cand["day_of_week"],
+             cand["start_time"], cand["end_time"], cand["room"], slot_id))
+        db.commit()
+        flash("Timetable slot updated.", "ok")
+        return redirect(url_for("admin_timetable", **back))
+    ctx = _slot_form_context(db, slot["program_id"], slot["semester"],
+                             slot["session_id"], slot["course_id"])
+    return render_template(
+        "timetable_slot_form.html", slot=slot, is_new=False,
+        programs=program_options(db), sessions=session_options(db),
+        days=TIMETABLE_DAYS, **ctx)
+
+
+@app.route("/admin/timetable/<int:slot_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_timetable_delete(slot_id):
+    db = get_db()
+    slot = db.execute("SELECT * FROM timetable_slots WHERE id=?",
+                      (slot_id,)).fetchone()
+    if not slot:
+        abort(404)
+    back = {"program_id": slot["program_id"], "semester": slot["semester"],
+            "session_id": slot["session_id"]}
+    db.execute("DELETE FROM timetable_slots WHERE id=?", (slot_id,))
+    db.commit()
+    flash("Timetable slot deleted.", "ok")
+    return redirect(url_for("admin_timetable", **back))
+
+
+# ----------------------------------------------------- timetable (student)
+def _student_timetable_rows(db, student_id, sess):
+    """The student's own timetable rows for one session: slots whose
+    course the student is enrolled in for that session (enrollments
+    carry the session NAME — the same rows the Enrollments tab lists,
+    narrowed to this session)."""
+    if not sess:
+        return []
+    enrolled = {r["course_id"] for r in db.execute(
+        """SELECT DISTINCT course_id FROM enrollments
+           WHERE student_id=? AND session_name=?""",
+        (student_id, sess["name"])).fetchall()}
+    if not enrolled:
+        return []
+    rows = db.execute(
+        """SELECT ts.*, c.code course_code, c.title course_title,
+                  f.full_name faculty_name
+           FROM timetable_slots ts
+           JOIN courses c ON c.id=ts.course_id
+           LEFT JOIN faculty f ON f.id=ts.faculty_id
+           WHERE ts.session_id=?""", (sess["id"],)).fetchall()
+    return [r for r in rows if r["course_id"] in enrolled]
+
+
+def build_timetable_pdf(db, student_id):
+    """The student's time table as a PDF, in the same green style as
+    the transcript PDF and driven by the same rows as the web page."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    student = student_full(db, student_id)
+    sess = current_session(db)
+    rows = _student_timetable_rows(db, student_id, sess)
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm,
+                            bottomMargin=14 * mm, leftMargin=14 * mm,
+                            rightMargin=14 * mm,
+                            title=f"Time Table {student['registration_no']}")
+    story = _pdf_header(styles, "MY TIME TABLE (Demo)")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
+    light = colors.HexColor("#eaf5ee")
+    info = [["Student Name", student["name"],
+             "Registration No.", student["registration_no"]],
+            ["Program", student["prog_name"] or "—",
+             "Department", student["dept_name"] or "—"],
+            ["Session", (sess["name"] if sess else "—"),
+             "Current Semester", str(student.get("current_semester") or "—")]]
+    t = Table(info, colWidths=[30 * mm, 58 * mm, 30 * mm, 64 * mm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                           ("BACKGROUND", (0, 0), (0, -1), light),
+                           ("BACKGROUND", (2, 0), (2, -1), light),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [t, Spacer(1, 5 * mm)]
+    if not rows:
+        story.append(Paragraph(
+            "No timetable slots have been published for your courses in "
+            "this session yet.", styles["BodyText"]))
+    for day, day_rows in _group_slots_by_day(rows):
+        story.append(Paragraph(day, styles["Heading3"]))
+        data = [["Time", "Course", "Room", "Teacher"]]
+        for r in day_rows:
+            data.append([f"{r['start_time']} – {r['end_time']}",
+                         f"{r['course_code']} — {r['course_title']}",
+                         r["room"] or "—", r["faculty_name"] or "—"])
+        lt = Table(data, colWidths=[32 * mm, 82 * mm, 28 * mm, 40 * mm])
+        lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                                ("BACKGROUND", (0, 0), (-1, 0), green),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        story += [lt, Spacer(1, 4 * mm)]
+    story += [Spacer(1, 2 * mm),
+              Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — "
+                        f"system-generated, all data shown is fictional "
+                        f"demo data.", styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/timetable")
+@role_required("student")
+def student_timetable():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        flash("No student record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    sess = current_session(db)
+    rows = _student_timetable_rows(db, sid, sess)
+    return render_template(
+        "student_timetable.html", student=student, sess=sess,
+        day_groups=_group_slots_by_day(rows), has_slots=bool(rows))
+
+
+@app.route("/student/timetable.pdf")
+@role_required("student")
+def student_timetable_pdf():
+    db = get_db()
+    sid = session.get("student_id")
+    if not sid:
+        abort(404)
+    student = student_full(db, sid)
+    return send_file(
+        io.BytesIO(build_timetable_pdf(db, sid)), as_attachment=True,
+        download_name=f"timetable-{student['registration_no']}.pdf",
+        mimetype="application/pdf")
+
+
+# ----------------------------------------------------- timetable (faculty)
+@app.route("/faculty/timetable")
+@role_required("faculty")
+def faculty_timetable():
+    db = get_db()
+    fac = _current_faculty(db)
+    if not fac:
+        flash("No faculty record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    sessions = session_options(db)
+    sess = current_session(db)
+    sess_id = _int_or_none(request.args.get("session_id")) \
+        or (sess["id"] if sess else None)
+    sess_name = next((s["name"] for s in sessions if s["id"] == sess_id), "")
+    rows = []
+    if sess_id:
+        rows = db.execute(
+            """SELECT ts.*, c.code course_code, c.title course_title,
+                      p.name prog_name
+               FROM timetable_slots ts
+               JOIN courses c ON c.id=ts.course_id
+               LEFT JOIN programs p ON p.id=ts.program_id
+               WHERE ts.faculty_id=? AND ts.session_id=?
+               ORDER BY ts.start_time""",
+            (fac["id"], sess_id)).fetchall()
+    return render_template(
+        "faculty_timetable.html", faculty=fac, sessions=sessions,
+        sess_id=sess_id, sess_name=sess_name,
+        day_groups=_group_slots_by_day(rows), has_slots=bool(rows))
+
+
+# ------------------------------------------------------- transport (admin)
+def _route_or_none(db, route_id):
+    return db.execute("SELECT * FROM transport_routes WHERE id=?",
+                      (route_id,)).fetchone()
+
+
+def _route_stops(db, route_id):
+    return db.execute(
+        """SELECT * FROM transport_stops WHERE route_id=?
+           ORDER BY sort_order, pickup_time, id""", (route_id,)).fetchall()
+
+
+def _route_form_values(form):
+    return {"name": (form.get("name") or "").strip(),
+            "title": (form.get("title") or "").strip(),
+            "description": (form.get("description") or "").strip(),
+            "is_active": 1 if form.get("is_active") else 0}
+
+
+@app.route("/admin/transport")
+@role_required("admin")
+def admin_transport():
+    db = get_db()
+    routes = db.execute(
+        """SELECT r.*, (SELECT COUNT(*) FROM transport_stops s
+               WHERE s.route_id=r.id) stop_count
+           FROM transport_routes r ORDER BY r.id""").fetchall()
+    return render_template("admin_transport.html", routes=routes)
+
+
+@app.route("/admin/transport/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_transport_new():
+    db = get_db()
+    if request.method == "POST":
+        v = _route_form_values(request.form)
+        if not v["name"]:
+            flash("Please give the route a name (e.g. Route 3).", "error")
+            return render_template("transport_route_form.html", route=v,
+                                   is_new=True)
+        db.insert(
+            """INSERT INTO transport_routes (name,title,description,
+               is_active,created_at) VALUES (?,?,?,?,?)""",
+            (v["name"], v["title"] or None, v["description"] or None,
+             v["is_active"], _now()))
+        db.commit()
+        flash("Transport route created — now add its stops.", "ok")
+        return redirect(url_for("admin_transport"))
+    return render_template("transport_route_form.html",
+                           route={"is_active": 1}, is_new=True)
+
+
+@app.route("/admin/transport/<int:route_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def admin_transport_edit(route_id):
+    db = get_db()
+    route = _route_or_none(db, route_id)
+    if not route:
+        abort(404)
+    if request.method == "POST":
+        v = _route_form_values(request.form)
+        if not v["name"]:
+            flash("Please give the route a name (e.g. Route 3).", "error")
+            return render_template("transport_route_form.html",
+                                   route=dict(route, **v), is_new=False)
+        db.execute(
+            """UPDATE transport_routes SET name=?, title=?, description=?,
+               is_active=? WHERE id=?""",
+            (v["name"], v["title"] or None, v["description"] or None,
+             v["is_active"], route_id))
+        db.commit()
+        flash("Transport route updated.", "ok")
+        return redirect(url_for("admin_transport"))
+    return render_template("transport_route_form.html", route=route,
+                           is_new=False)
+
+
+@app.route("/admin/transport/<int:route_id>/delete", methods=["POST"])
+@role_required("admin")
+def admin_transport_delete(route_id):
+    db = get_db()
+    route = _route_or_none(db, route_id)
+    if not route:
+        abort(404)
+    stops = db.execute(
+        "SELECT COUNT(*) c FROM transport_stops WHERE route_id=?",
+        (route_id,)).fetchone()["c"]
+    if stops:
+        flash(f"Cannot delete '{route['name']}': it still has {stops} "
+              f"stop(s). Delete the stops first, then the route.",
+              "error")
+        return redirect(url_for("admin_transport_stops", route_id=route_id))
+    db.execute("DELETE FROM transport_routes WHERE id=?", (route_id,))
+    db.commit()
+    flash("Transport route deleted.", "ok")
+    return redirect(url_for("admin_transport"))
+
+
+@app.route("/admin/transport/<int:route_id>/stops")
+@role_required("admin")
+def admin_transport_stops(route_id):
+    db = get_db()
+    route = _route_or_none(db, route_id)
+    if not route:
+        abort(404)
+    stops = _route_stops(db, route_id)
+    next_order = (stops[-1]["sort_order"] or 0) + 1 if stops else 1
+    return render_template("admin_transport_stops.html", route=route,
+                           stops=stops, next_order=next_order)
+
+
+def _stop_form_values(db, form, route_id):
+    """Validate a stop form -> (values dict, error message)."""
+    name = (form.get("stop_name") or "").strip()
+    pickup = _clean_time(form.get("pickup_time"))
+    order = _int_or_none(form.get("sort_order"))
+    if order is None:
+        rows = _route_stops(db, route_id)
+        order = ((rows[-1]["sort_order"] or 0) + 1) if rows else 1
+    if not name:
+        return None, "Please give the stop a name."
+    if not pickup:
+        return None, "Please give a valid pickup time (HH:MM)."
+    return {"stop_name": name, "pickup_time": pickup,
+            "sort_order": order}, None
+
+
+@app.route("/admin/transport/<int:route_id>/stops/add", methods=["POST"])
+@role_required("admin")
+def admin_transport_stop_add(route_id):
+    db = get_db()
+    if not _route_or_none(db, route_id):
+        abort(404)
+    v, err = _stop_form_values(db, request.form, route_id)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("admin_transport_stops", route_id=route_id))
+    db.insert(
+        """INSERT INTO transport_stops (route_id,stop_name,pickup_time,
+           sort_order) VALUES (?,?,?,?)""",
+        (route_id, v["stop_name"], v["pickup_time"], v["sort_order"]))
+    db.commit()
+    flash("Stop added.", "ok")
+    return redirect(url_for("admin_transport_stops", route_id=route_id))
+
+
+def _stop_or_none(db, route_id, stop_id):
+    return db.execute(
+        "SELECT * FROM transport_stops WHERE id=? AND route_id=?",
+        (stop_id, route_id)).fetchone()
+
+
+@app.route("/admin/transport/<int:route_id>/stops/<int:stop_id>/edit",
+           methods=["POST"])
+@role_required("admin")
+def admin_transport_stop_edit(route_id, stop_id):
+    db = get_db()
+    if not _stop_or_none(db, route_id, stop_id):
+        abort(404)
+    v, err = _stop_form_values(db, request.form, route_id)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("admin_transport_stops", route_id=route_id))
+    db.execute(
+        """UPDATE transport_stops SET stop_name=?, pickup_time=?,
+           sort_order=? WHERE id=?""",
+        (v["stop_name"], v["pickup_time"], v["sort_order"], stop_id))
+    db.commit()
+    flash("Stop updated.", "ok")
+    return redirect(url_for("admin_transport_stops", route_id=route_id))
+
+
+@app.route("/admin/transport/<int:route_id>/stops/<int:stop_id>/delete",
+           methods=["POST"])
+@role_required("admin")
+def admin_transport_stop_delete(route_id, stop_id):
+    db = get_db()
+    if not _stop_or_none(db, route_id, stop_id):
+        abort(404)
+    db.execute("DELETE FROM transport_stops WHERE id=?", (stop_id,))
+    db.commit()
+    flash("Stop deleted.", "ok")
+    return redirect(url_for("admin_transport_stops", route_id=route_id))
+
+
+# ----------------------------------------------------- transport (student)
+@app.route("/student/transport")
+@role_required("student")
+def student_transport():
+    db = get_db()
+    q = (request.args.get("q") or "").strip()
+    routes = []
+    for r in db.execute(
+            "SELECT * FROM transport_routes WHERE COALESCE(is_active,1)=1 "
+            "ORDER BY id").fetchall():
+        stops = _route_stops(db, r["id"])
+        match_ids = {s["id"] for s in stops
+                     if q and q.lower() in (s["stop_name"] or "").lower()}
+        if q and not match_ids:
+            continue  # search: only routes serving a matching stop
+        routes.append({"route": r, "stops": stops, "match_ids": match_ids})
+    return render_template("student_transport.html", routes=routes, q=q)
 
 
 if __name__ == "__main__":

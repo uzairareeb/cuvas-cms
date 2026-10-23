@@ -1,0 +1,38 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<p><a href="{{ url_for('admin_transport') }}">← Back to Transport Routes</a></p>
+<div class="toolbar"><h2>{{ route.name }} — Stops</h2></div>
+<p class="muted">{{ route.title or '' }}{% if route.description %} · {{ route.description }}{% endif %}
+Stops run in the order shown (by Order, then pickup time). Students see this order on their Transport page.</p>
+
+<div class="card">
+<h3 style="margin-top:0">Add a stop</h3>
+<form method="post" action="{{ url_for('admin_transport_stop_add', route_id=route.id) }}" class="toolbar">
+<input type="text" name="stop_name" placeholder="Stop name, e.g. Main Gate" required>
+<label>Pickup <input type="time" name="pickup_time" required></label>
+<label>Order <input type="number" name="sort_order" value="{{ next_order }}" style="width:80px"></label>
+<button class="btn green" type="submit">Add Stop</button>
+</form>
+</div>
+
+<div class="card" style="margin-top:16px">
+<table>
+<tr><th>Order</th><th>Stop</th><th>Pickup Time</th><th>Edit</th><th></th></tr>
+{% for s in stops %}
+<tr>
+<td>{{ s.sort_order }}</td>
+<td>{{ s.stop_name }}</td>
+<td>{{ s.pickup_time }}</td>
+<td><form method="post" action="{{ url_for('admin_transport_stop_edit', route_id=route.id, stop_id=s.id) }}" class="toolbar">
+<input type="text" name="stop_name" value="{{ s.stop_name }}" required>
+<input type="time" name="pickup_time" value="{{ s.pickup_time }}" required>
+<input type="number" name="sort_order" value="{{ s.sort_order }}" style="width:70px">
+<button class="btn small" type="submit">Save</button>
+</form></td>
+<td><form method="post" action="{{ url_for('admin_transport_stop_delete', route_id=route.id, stop_id=s.id) }}" onsubmit="return confirm('Delete stop {{ s.stop_name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td>
+</tr>
+{% endfor %}
+</table>
+{% if not stops %}<p class="muted">No stops yet — add the first pickup point above.</p>{% endif %}
+</div>
+{% endblock %}

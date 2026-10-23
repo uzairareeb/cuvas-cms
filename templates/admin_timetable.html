@@ -1,0 +1,42 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Timetable</h2>
+<a class="btn green" href="{{ url_for('admin_timetable_new', program_id=prog_id, semester=semester, session_id=sess_id) }}">＋ Add Slot</a></div>
+<p class="muted">The weekly timetable for one class — pick a program, semester and session. Saving a slot is
+clash-checked: the same class, the same teacher or the same room cannot be double-booked at an
+overlapping time in the same session (back-to-back slots are fine).</p>
+
+<form method="get" class="toolbar">
+<label>Program</label>
+<select name="program_id">{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if p.id==prog_id else '' }}>{{ p.name }}</option>{% endfor %}</select>
+<label>Semester</label>
+<select name="semester">{% for n in range(1, 11) %}<option value="{{ n }}" {{ 'selected' if n==semester else '' }}>Semester {{ n }}</option>{% endfor %}</select>
+<label>Session</label>
+<select name="session_id">{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if s.id==sess_id else '' }}>{{ s.name }}</option>{% endfor %}</select>
+<button class="btn" type="submit">Show</button>
+</form>
+
+<h3>{{ prog_name }} — Semester {{ semester }} · {{ sess_name }}</h3>
+{% if courses %}<p class="muted">Courses in this class:
+{% for c in courses %}<a href="{{ url_for('admin_timetable_new', program_id=prog_id, semester=semester, session_id=sess_id, course_id=c.id) }}">{{ c.code }}</a>{{ ' · ' if not loop.last else '' }}{% endfor %}
+<span class="muted">(“Add slot” from a course link pre-selects its assigned teacher.)</span></p>{% endif %}
+{% if not day_groups %}<p class="muted">No slots yet for this class in this session. Use “Add Slot” to build the week.</p>{% endif %}
+{% for day, rows in day_groups %}
+<div class="card" style="margin-bottom:16px">
+<h4 style="margin-top:0">{{ day }}</h4>
+<table>
+<tr><th>Time</th><th>Course</th><th>Room</th><th>Teacher</th><th></th></tr>
+{% for s in rows %}
+<tr>
+<td>{{ s.start_time }} – {{ s.end_time }}</td>
+<td>{{ s.course_code }} — {{ s.course_title }}</td>
+<td>{{ s.room or '—' }}</td>
+<td>{{ s.faculty_name or '—' }}</td>
+<td class="actions"><a class="btn small" href="{{ url_for('admin_timetable_edit', slot_id=s.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_timetable_delete', slot_id=s.id) }}" onsubmit="return confirm('Delete this timetable slot ({{ s.course_code }}, {{ day }} {{ s.start_time }})?');"><button class="btn small danger" type="submit">Delete</button></form></td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endfor %}
+{% endblock %}

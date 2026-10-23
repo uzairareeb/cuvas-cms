@@ -1,0 +1,28 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<h2>{{ 'Add Timetable Slot' if is_new else 'Edit Timetable Slot' }}</h2>
+<p class="muted">Courses are limited to the selected program + semester. Change the program or
+semester above and save — or go back and pick another class first. When a course already has an
+assigned teacher for the session, that teacher is pre-selected below.</p>
+<form method="post" class="form-card">
+<label>Program *</label>
+<select name="program_id" required>{% for p in programs %}<option value="{{ p.id }}" {{ 'selected' if slot.program_id==p.id else '' }}>{{ p.name }}</option>{% endfor %}</select>
+<label>Semester *</label>
+<select name="semester" required>{% for n in range(1, 11) %}<option value="{{ n }}" {{ 'selected' if slot.semester==n else '' }}>Semester {{ n }}</option>{% endfor %}</select>
+<label>Session *</label>
+<select name="session_id" required>{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if slot.session_id==s.id else '' }}>{{ s.name }}</option>{% endfor %}</select>
+<label>Course *</label>
+<select name="course_id" required><option value="">Choose a course…</option>
+{% for c in courses %}<option value="{{ c.id }}" {{ 'selected' if slot.course_id==c.id else '' }}>{{ c.code }} — {{ c.title }}</option>{% endfor %}</select>
+<label>Teacher</label>
+<select name="faculty_id"><option value="">— Not assigned —</option>
+{% for f in faculty_list %}<option value="{{ f.id }}" {{ 'selected' if slot.faculty_id==f.id else '' }}>{{ f.full_name }}</option>{% endfor %}</select>
+<label>Day *</label>
+<select name="day_of_week" required>{% for d in days %}<option value="{{ d }}" {{ 'selected' if slot.day_of_week==d else '' }}>{{ d }}</option>{% endfor %}</select>
+<label>Start Time *</label><input type="time" name="start_time" required value="{{ slot.start_time or '' }}">
+<label>End Time *</label><input type="time" name="end_time" required value="{{ slot.end_time or '' }}">
+<label>Room</label><input type="text" name="room" value="{{ slot.room or '' }}" placeholder="e.g. CR-3, Lab 2">
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Add Slot' if is_new else 'Save Changes' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_timetable', program_id=slot.program_id, semester=slot.semester, session_id=slot.session_id) }}">Cancel</a></div>
+</form>
+{% endblock %}

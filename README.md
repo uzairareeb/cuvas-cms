@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.11
+# MY CUVAS — Campus Management System (Demo) v0.12
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -23,7 +23,13 @@ below. **Step 15 (v0.11)** adds course repeat / improvement — apply
 from published results, an admin-set per-credit-hour fee, approval by
 issuing a normal fee voucher, enrolment on verified payment, and a
 transcript that counts only the latest attempt of a repeated course —
-see the v0.11 section below.
+see the v0.11 section below. **Step 16 (v0.12)** adds the timetable
+(admin-built weekly slots per program + semester + session, saved
+with class/teacher/room clash checks; students get a web + PDF
+“My Time Table”, teachers a per-session teaching timetable) and
+transport (admin-managed bus routes with ordered stops; students
+browse active routes and search by stop name) — see the v0.12
+section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -125,6 +131,21 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
 - `/admin/repeat` — the repeat desk: the per-credit-hour rate setting
   plus all requests (status filter, name / reg-no search) with
   Approve (issues the fee voucher) / Reject (remarks required)
+- `/admin/timetable` — the weekly timetable per program + semester +
+  session (filterable), grouped by day; add / edit / delete slots with
+  **clash checks** (class / teacher / room) — see the Timetable &
+  Transport section below
+- `/student/timetable` — “My Time Table” for the current session
+  (enrolled courses only) and `/student/timetable.pdf`; linked by a
+  **View Time Table** button in the Course Enrollments tab
+- `/faculty/timetable` — the teacher's own teaching timetable for a
+  chosen session
+- `/admin/transport` — transport routes (create / edit / delete —
+  delete blocked while stops exist) and `/admin/transport/<id>/stops`
+  — per-route stops (add / edit / delete, ordered)
+- `/student/transport` — active routes with their stops in order and
+  a stop-name search; linked by a **Transport** button in the Profile
+  tab
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -492,6 +513,73 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   transcript stays at **CGPA 3.63** and `verify_v04.py` passes
   untouched.
 
+## Timetable & Transport (Step 16, v0.12)
+
+Three new tables (plain INTEGER ids like `enrollments`/`results`, so
+older migration simulations stay safe on PostgreSQL): `timetable_slots`
+(one weekly class meeting: program + semester + session, course,
+optional teacher, day Monday–Saturday, `start_time`/`end_time` as
+zero-padded `HH:MM` text, room), `transport_routes` (name, title,
+description, active flag) and `transport_stops` (route, stop name,
+pickup time, sort order).
+
+**Timetable.**
+
+- **Admin** builds the timetable per program + semester + session on
+  `/admin/timetable` (the default view is the first program, semester
+  1, the current session). The slot form's course list is limited to
+  that program + semester; picking a course from the list page's
+  per-course “Add slot” links pre-selects the teacher **assigned to
+  that course for the session** (the v0.7 `course_assignments`).
+- **Clash check** (`timetable_clashes`, run on add AND edit, always
+  excluding the slot being edited): two slots overlap when they
+  share the session and day and `new_start < existing_end` and
+  `existing_start < new_end` — so a slot starting exactly when
+  another ends (back-to-back) is fine. Each overlap is reported with
+  a specific message and the save is refused: a **Class clash** (the
+  same program + semester already has a class then), a **Teacher
+  clash** (the same teacher already teaches then) or a **Room clash**
+  (the same room — compared trimmed and case-insensitively — is
+  already booked then). Several clashes can be reported at once.
+- **Student** — `/student/timetable` (“My Time Table”, linked by a
+  **View Time Table** button in the Course Enrollments tab) shows,
+  for the **current session**, exactly the slots whose course the
+  student is enrolled in for that session — enrolments are matched
+  by session **name**, the same rows the Enrollments tab lists —
+  grouped by day with time, course, room and teacher, plus an empty
+  state. `/student/timetable.pdf` renders the same rows in the green
+  PDF style (`buf.seek(0)` after `build()`, as everywhere).
+- **Faculty** — `/faculty/timetable` (“My Teaching Timetable”)
+  shows the logged-in teacher's own slots for a chosen session
+  (default: the current one), grouped by day with course,
+  program + semester, time and room.
+- There is deliberately **no timetable seed**: the admin builds the
+  timetable, and the demo data has no canonical class timings to
+  invent.
+
+**Transport.**
+
+- **Admin** manages routes on `/admin/transport` (name, title,
+  description, active toggle) and each route's stops on
+  `/admin/transport/<id>/stops` (stop name, pickup time, order;
+  listed by sort order, then pickup time). Following the app-wide
+  pattern, a route's **delete is blocked while it still has stops**
+  — delete the stops first — with the reason shown.
+- **Student** — `/student/transport` (linked by a **Transport**
+  button in the Profile tab, alongside My Clearance) lists the
+  **active routes only**, each with its stops in order and pickup
+  times. A search box (`?q=`) filters by stop name
+  (case-insensitive substring): only routes serving a matching stop
+  are shown and the matching stops are highlighted; a search with
+  no match says so.
+- **Seed** (`backfill_v12`, only while `transport_routes` is
+  empty — admin changes are never undone): two clearly-labelled
+  demo routes — *Route 1 — City Side* (Satellite Town 07:10,
+  Model Town 07:25, Cantt 07:40, Main Gate 07:55, CUVAS Campus
+  08:10) and *Route 2 — Hasilpur Road Side* (Hasilpur Road Chowk
+  07:15, University Chowk 07:35, Main Gate 07:55, CUVAS Campus
+  08:10). All of it is fictional demo data, editable by the admin.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -641,8 +729,42 @@ constraint on `users` from before the faculty role existed, so the
 v0.7 faculty seed (unchanged by this step) cannot boot against that
 file — use a fresh `DB_PATH` or `DATABASE_URL` as the suites do.
 
-## Not in v0.11
+`verify_v12.py` adds a 51-check pass over Step 16 (transport seeded
+on a fresh DB: exactly the two demo routes with their ordered stops
+and pickup times; slot add lands with its teacher/room and lists
+grouped by day; all three clashes — class, teacher, and room
+(case-insensitive) — refused with their specific messages and no row
+written, while a back-to-back slot and a different-day slot pass;
+end-before-start refused; the slot form's courses are limited to
+the program + semester and its teacher select pre-selects the
+course's assigned teacher; an edit into its own time succeeds —
+no self-clash — while an edit into another slot's time is refused
+with the row unchanged; the student's timetable contains exactly
+the slots of their enrolled courses for the current session — an
+other-program slot, an unenrolled course's slot and another
+session's slot all absent — and the PDF returns real %PDF bytes
+containing their own course and not the others; a student with no
+current-session enrolments sees the empty state; the faculty
+timetable shows only the teacher's own slots and follows the
+session switch; route + stop CRUD incl. ordering, invalid pickup
+time refused, route delete blocked while stops exist and allowed
+once they are gone; inactive routes and their stops hidden from
+students but visible to the admin; stop-name search finds Route 1
+only for 'satellite', both routes for 'Main Gate', Route 2 only
+for 'Hasilpur Road Chowk', and reports no match otherwise; role
+guards on both sides). v0.12 result: **all ten suites ALL PASS on
+both backends** (SQLite and PostgreSQL identical: 43 + 52 + 60 +
+72 + 64 + 52 + 59 + 52 + 64 + 51 = 569 checks). Migration note:
+v0.12 adds three tables via the boot DDL plus the guarded
+`backfill_v12` transport seed (only while the routes table is
+empty), so a v0.11 database boots into v0.12 with its data
+untouched and a second boot is a strict no-op — simulated by
+dropping the three tables from a booted database and booting
+again (tables recreated, demo routes re-seeded, demo students
+intact).
+
+## Not in v0.12
 
 Posting an approved scholarship award to the fee ledger / vouchers,
-timetable, surveys, dept/accounts/COE portals — the rest of Phase 2
+surveys, dept/accounts/COE portals — the rest of Phase 2
 (see `../architecture.md`).

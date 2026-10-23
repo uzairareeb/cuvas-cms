@@ -1,0 +1,24 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Transport Routes</h2>
+<a class="btn green" href="{{ url_for('admin_transport_new') }}">＋ Add Route</a></div>
+<p class="muted">Bus routes students can see. Only <strong>active</strong> routes appear on the student
+Transport page. A route can be deleted once its stops are removed.</p>
+
+<table>
+<tr><th>Route</th><th>Title</th><th>Description</th><th>Stops</th><th>Status</th><th></th></tr>
+{% for r in routes %}
+<tr>
+<td><strong>{{ r.name }}</strong></td>
+<td>{{ r.title or '—' }}</td>
+<td>{{ r.description or '—' }}</td>
+<td>{{ r.stop_count }}</td>
+<td><span class="pill {{ 'paid' if r.is_active else 'pending' }}">{{ 'Active' if r.is_active else 'Inactive' }}</span></td>
+<td class="actions"><a class="btn small" href="{{ url_for('admin_transport_stops', route_id=r.id) }}">Stops</a>
+<a class="btn small" href="{{ url_for('admin_transport_edit', route_id=r.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_transport_delete', route_id=r.id) }}" onsubmit="return confirm('Delete route {{ r.name }}? (Blocked while it still has stops.)');"><button class="btn small danger" type="submit">Delete</button></form></td>
+</tr>
+{% endfor %}
+</table>
+{% if not routes %}<p class="muted">No transport routes yet.</p>{% endif %}
+{% endblock %}

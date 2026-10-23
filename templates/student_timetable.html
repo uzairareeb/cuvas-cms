@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='enrollments') }}">← Back to Course Enrollments</a></p>
+<div class="toolbar"><h2>My Time Table</h2>
+<a class="btn green" href="{{ url_for('student_timetable_pdf') }}">⬇ Download PDF</a></div>
+<p class="muted">{{ student.name }} · {{ student.registration_no }} · Session: {{ sess.name if sess else '—' }} —
+classes for the courses you are enrolled in this session.</p>
+
+{% if not has_slots %}<div class="card"><p>No timetable slots have been published for your courses in this session yet.</p></div>{% endif %}
+{% for day, rows in day_groups %}
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">{{ day }}</h3>
+<table>
+<tr><th>Time</th><th>Course</th><th>Room</th><th>Teacher</th></tr>
+{% for s in rows %}
+<tr>
+<td>{{ s.start_time }} – {{ s.end_time }}</td>
+<td>{{ s.course_code }} — {{ s.course_title }}</td>
+<td>{{ s.room or '—' }}</td>
+<td>{{ s.faculty_name or '—' }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endfor %}
+</div>
+{% endblock %}

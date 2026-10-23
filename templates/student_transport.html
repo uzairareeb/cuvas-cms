@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+<div class="toolbar"><h2>Transport</h2></div>
+<p class="muted">University bus routes and morning pickup points. Search by your stop name to find your route.</p>
+
+<form method="get" class="toolbar">
+<input type="text" name="q" value="{{ q }}" placeholder="Search by stop name, e.g. Main Gate">
+<button class="btn green" type="submit">Search</button>
+{% if q %}<a class="btn ghost" href="{{ url_for('student_transport') }}">Show all routes</a>{% endif %}
+</form>
+
+{% if q and not routes %}<div class="card"><p>No active route serves a stop matching “{{ q }}”.</p></div>{% endif %}
+{% if not q and not routes %}<div class="card"><p>No transport routes are published yet.</p></div>{% endif %}
+
+{% for item in routes %}{% set r = item.route %}
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">🚌 {{ r.title or r.name }}</h3>
+{% if r.description %}<p class="muted" style="margin:2px 0">{{ r.description }}</p>{% endif %}
+<table>
+<tr><th>#</th><th>Stop</th><th>Pickup Time</th></tr>
+{% for s in item.stops %}
+<tr{% if s.id in item.match_ids %} style="background:#eaf5ee;font-weight:600"{% endif %}>
+<td>{{ loop.index }}</td>
+<td>{{ s.stop_name }}{% if s.id in item.match_ids %} ✓ your stop{% endif %}</td>
+<td>{{ s.pickup_time }}</td>
+</tr>
+{% endfor %}
+</table>
+{% if not item.stops %}<p class="muted">No stops published for this route yet.</p>{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endblock %}

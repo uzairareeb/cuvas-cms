@@ -1,0 +1,10 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Transport Route' if not is_new else 'Add Transport Route' }}</h2>
+<form method="post" class="form-card">
+<label>Route Name * (e.g. Route 3)</label><input name="name" required value="{{ route.name if route.name else '' }}">
+<label>Title (e.g. Route 3 — City Side)</label><input name="title" value="{{ route.title if route.title else '' }}">
+<label>Description</label><textarea name="description" rows="3">{{ route.description if route.description else '' }}</textarea>
+<label class="check"><input type="checkbox" name="is_active" value="1" {{ 'checked' if route.is_active else '' }}> Active (visible to students)</label>
+<div class="form-actions"><button class="btn green" type="submit">{{ 'Save Changes' if not is_new else 'Add Route' }}</button>
+<a class="btn ghost" href="{{ url_for('admin_transport') }}">Cancel</a></div></form>
+{% endblock %}

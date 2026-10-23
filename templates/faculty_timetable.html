@@ -1,0 +1,30 @@
+{% extends "faculty_base.html" %}
+{% block faculty_body %}
+<div class="toolbar"><h2>My Teaching Timetable</h2></div>
+<p class="muted">{{ faculty.full_name }} — the classes assigned to you in the timetable for the chosen session.</p>
+
+<form method="get" class="toolbar">
+<label>Session</label>
+<select name="session_id">{% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if s.id==sess_id else '' }}>{{ s.name }}</option>{% endfor %}</select>
+<button class="btn" type="submit">Show</button>
+</form>
+
+<h3>{{ sess_name }}</h3>
+{% if not has_slots %}<p class="muted">No timetable slots are assigned to you in this session yet.</p>{% endif %}
+{% for day, rows in day_groups %}
+<div class="card" style="margin-bottom:16px">
+<h4 style="margin-top:0">{{ day }}</h4>
+<table>
+<tr><th>Time</th><th>Course</th><th>Program · Semester</th><th>Room</th></tr>
+{% for s in rows %}
+<tr>
+<td>{{ s.start_time }} – {{ s.end_time }}</td>
+<td>{{ s.course_code }} — {{ s.course_title }}</td>
+<td>{{ s.prog_name or '—' }} · Semester {{ s.semester }}</td>
+<td>{{ s.room or '—' }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endfor %}
+{% endblock %}
