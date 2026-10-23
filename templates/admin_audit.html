@@ -1,0 +1,26 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Audit Log</h2>
+<a class="btn" href="{{ url_for('admin_reports') }}">← All Reports</a></div>
+<p class="muted">Append-only record of sign-ins, sign-outs and significant
+actions across the portals, newest first. This log is read-only — entries
+cannot be edited or deleted. Generated on {{ generated }}.</p>
+
+<form method="get" class="toolbar">
+<input name="q" value="{{ q }}" placeholder="Search username, action or details…">
+<select name="role">
+<option value="">All roles</option>
+{% for r in roles %}<option value="{{ r }}" {% if role == r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+</select>
+<label>From <input type="date" name="date_from" value="{{ date_from }}"></label>
+<label>To <input type="date" name="date_to" value="{{ date_to }}"></label>
+<button class="btn" type="submit">Filter</button>
+</form>
+
+<p class="muted">{{ total }} matching entr{{ 'y' if total == 1 else 'ies' }}.
+{% if capped %}Showing the newest 300 only.{% endif %}</p>
+
+<table><tr><th>When</th><th>User</th><th>Role</th><th>Action</th><th>Details</th></tr>
+{% for r in rows %}<tr><td>{{ r.created_at }}</td><td>{{ r.username or '—' }}</td><td>{{ r.role or '—' }}</td><td><strong>{{ r.action }}</strong></td><td>{{ r.details or '' }}</td></tr>
+{% else %}<tr><td colspan="5">No audit entries match.</td></tr>{% endfor %}</table>
+{% endblock %}

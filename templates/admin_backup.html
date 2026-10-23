@@ -1,0 +1,28 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Backup</h2>
+<a class="btn" href="{{ url_for('admin_reports') }}">← All Reports</a></div>
+<p class="muted">Generated on {{ generated }}.</p>
+
+<div class="card">
+<h3 style="margin-top:0">What the backup contains</h3>
+<ul>
+<li><strong>cuvas-backup.xlsx</strong> — one sheet per database table (departments,
+programs, sessions, courses, students, faculty, users, vouchers, the fee
+ledger, results, attendance, tickets, documents, clearance, scholarships,
+repeat requests, timetable, transport, societies, vehicle passes, the audit
+log, and more). Document tables are metadata only.</li>
+<li><strong>files/</strong> — every file stored in the database: student document
+uploads, repository files and voucher paid proofs, named
+<code>&lt;table&gt;-&lt;id&gt;-&lt;original filename&gt;</code>.</li>
+<li><strong>README.txt</strong> — the sheet list and these notes.</li>
+</ul>
+<p><strong>Passwords are never included</strong> — the users sheet omits password
+hashes, so logins cannot be restored from a backup.</p>
+<p><strong>Restore is manual / by a developer</strong> — there is deliberately no
+automatic restore in the app.</p>
+<p>{% if last_backup %}Last backup downloaded: <strong>{{ last_backup.created_at }}</strong>
+by {{ last_backup.username }}.{% else %}No backup has been downloaded yet.{% endif %}</p>
+<p><a class="btn green" href="{{ url_for('admin_backup_download') }}">⬇ Download Full Backup (ZIP)</a></p>
+</div>
+{% endblock %}

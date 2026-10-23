@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.13
+MY CUVAS — Campus Management System (Demo) v0.14
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -90,6 +90,22 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      Code39-barcode pass PDF; the same vehicle number can never hold
      two live passes. (Step 17 surveys were deferred by the user and
      are deliberately NOT part of this release.)
+ 18. v0.14 reports, audit log & backup — an admin Reports centre
+     (/admin/reports) with four reports whose figures come from the
+     SAME shared computations as the screens they summarise: Fee
+     Collection (ledger-based issued / collected / outstanding for a
+     session, department breakdown + defaulters), Student Strength,
+     Results Summary (grades derived via result_grade_gp) and
+     Attendance Summary (the shared attendance_summary helper) —
+     each with an Excel export. An append-only audit_log records
+     sign-ins (success + failure), sign-outs and every significant
+     create / update / delete / decision across the admin, faculty
+     and student portals, written by ONE helper (log_audit) that can
+     never break the action it records. /admin/backup downloads a
+     full ZIP backup: one Excel workbook (a sheet per table, the
+     users sheet WITHOUT password hashes, document tables as
+     metadata only) plus every stored file blob under files/ and a
+     README. Restore is deliberately manual / by a developer.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -400,6 +416,14 @@ DDL = [
         status TEXT DEFAULT 'Requested', pass_no TEXT,
         valid_till TEXT, admin_remarks TEXT,
         decided_by TEXT, decided_at TEXT, created_at TEXT)""",
+    # --- v0.14 audit log (new table only; plain INTEGER user id like
+    # enrollments/results — no REFERENCES. Append-only by design: the
+    # ONLY writer is log_audit() below with plain INSERTs; no route
+    # edits or deletes rows. username/role are snapshots taken at the
+    # time of the action, so later renames never rewrite history.) ---
+    f"""CREATE TABLE IF NOT EXISTS audit_log (
+        id {_PK}, user_id INTEGER, username TEXT, role TEXT,
+        action TEXT, details TEXT, created_at TEXT)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -1012,6 +1036,46 @@ def home_for_role():
                                                 "student_dashboard")
 
 
+# ------------------------------------------------------------- audit log (v0.14)
+def log_audit(action, details="", username=None, role=None, user_id=None):
+    """Append ONE row to the audit log for the current actor.
+
+    Actor identity defaults to the signed-in session user (the username
+    / role are looked up from the users row, so the snapshot is the
+    login identity at action time); callers recording a sign-in pass
+    the identity explicitly. A failed sign-in passes the ATTEMPTED
+    username. This helper NEVER raises and never rolls back the
+    caller's work: it is called only after the action it records has
+    succeeded, and any logging failure is swallowed so the action
+    itself can never be broken by the audit trail."""
+    try:
+        db = get_db()
+        if user_id is None:
+            user_id = session.get("user_id")
+        if user_id and (username is None or role is None):
+            u = db.execute("SELECT username, role FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+            if u:
+                if username is None:
+                    username = u["username"]
+                if role is None:
+                    role = u["role"]
+        if username is None:
+            username = ""
+        if role is None:
+            role = session.get("role") or ""
+        db.execute(
+            """INSERT INTO audit_log (user_id,username,role,action,details,
+               created_at) VALUES (?,?,?,?,?,?)""",
+            (user_id, username, role, action, details or "", _now()))
+        db.commit()
+    except Exception:
+        try:
+            get_db().rollback()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- routes: public / auth
 @app.route("/")
 def landing():
@@ -1044,13 +1108,21 @@ def login():
                            display_name=user["display_name"],
                            student_id=user["student_id"],
                            faculty_id=user.get("faculty_id"))
+            log_audit("login_success", f"Signed in as {user['role']}",
+                      username=user["username"], role=user["role"],
+                      user_id=user["id"])
             return redirect(url_for(home_for_role()))
+        log_audit("login_failed", "Failed sign-in attempt",
+                  username=username,
+                  role=(user["role"] if user else ""),
+                  user_id=(user["id"] if user else None))
         flash("Invalid username or password.", "error")
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    log_audit("logout")
     session.clear()
     return redirect(url_for("landing"))
 
@@ -1124,6 +1196,7 @@ def admin_department_new():
                 db.insert("INSERT INTO departments (name,code,faculty_name) VALUES (?,?,?)",
                           (name, code, faculty))
                 db.commit()
+                log_audit("department_created", f"Department '{name}' ({code})")
                 flash(f"Department '{name}' added.", "ok")
                 return redirect(url_for("admin_departments"))
             except Exception as e:
@@ -1154,6 +1227,7 @@ def admin_department_edit(dept_id):
                 db.execute("UPDATE departments SET name=?,code=?,faculty_name=? WHERE id=?",
                            (name, code, faculty, dept_id))
                 db.commit()
+                log_audit("department_updated", f"Department '{name}' ({code})")
                 flash(f"Department '{name}' updated.", "ok")
                 return redirect(url_for("admin_departments"))
             except Exception as e:
@@ -1178,6 +1252,7 @@ def admin_department_delete(dept_id):
         return redirect(url_for("admin_departments"))
     db.execute("DELETE FROM departments WHERE id=?", (dept_id,))
     db.commit()
+    log_audit("department_deleted", f"Department '{dept['name']}'")
     flash(f"Department '{dept['name']}' deleted.", "ok")
     return redirect(url_for("admin_departments"))
 
@@ -1213,6 +1288,7 @@ def admin_program_new():
             db.insert("INSERT INTO programs (department_id,name,degree_level,duration_semesters) VALUES (?,?,?,?)",
                       (dept_id, name, level, duration))
             db.commit()
+            log_audit("program_created", f"Program '{name}'")
             flash(f"Program '{name}' added.", "ok")
             return redirect(url_for("admin_programs"))
     return render_template("program_form.html", prog=None, **_program_form_values(db))
@@ -1237,6 +1313,7 @@ def admin_program_edit(prog_id):
             db.execute("UPDATE programs SET department_id=?,name=?,degree_level=?,duration_semesters=? WHERE id=?",
                        (dept_id, name, level, duration, prog_id))
             db.commit()
+            log_audit("program_updated", f"Program '{name}'")
             flash(f"Program '{name}' updated.", "ok")
             return redirect(url_for("admin_programs"))
     return render_template("program_form.html", prog=prog, **_program_form_values(db))
@@ -1258,6 +1335,7 @@ def admin_program_delete(prog_id):
         return redirect(url_for("admin_programs"))
     db.execute("DELETE FROM programs WHERE id=?", (prog_id,))
     db.commit()
+    log_audit("program_deleted", f"Program '{prog['name']}'")
     flash(f"Program '{prog['name']}' deleted.", "ok")
     return redirect(url_for("admin_programs"))
 
@@ -1289,6 +1367,7 @@ def admin_session_new():
             db.insert("INSERT INTO academic_sessions (name,starts_on,ends_on,is_open) VALUES (?,?,?,?)",
                       (name, starts, ends, is_open))
             db.commit()
+            log_audit("session_created", f"Session '{name}'")
             flash(f"Session '{name}' added.", "ok")
             return redirect(url_for("admin_sessions"))
     return render_template("session_form.html", sess=None)
@@ -1317,6 +1396,7 @@ def admin_session_edit(sess_id):
                        (name, starts, ends, is_open, sess_id))
             db.execute("UPDATE students SET session_name=? WHERE session_id=?", (name, sess_id))
             db.commit()
+            log_audit("session_updated", f"Session '{name}'")
             flash(f"Session '{name}' updated.", "ok")
             return redirect(url_for("admin_sessions"))
     return render_template("session_form.html", sess=sess)
@@ -1336,6 +1416,7 @@ def admin_session_delete(sess_id):
         return redirect(url_for("admin_sessions"))
     db.execute("DELETE FROM academic_sessions WHERE id=?", (sess_id,))
     db.commit()
+    log_audit("session_deleted", f"Session '{sess['name']}'")
     flash(f"Session '{sess['name']}' deleted.", "ok")
     return redirect(url_for("admin_sessions"))
 
@@ -1381,6 +1462,7 @@ def admin_course_new():
                 "INSERT INTO courses (program_id,semester_no,code,title,credit_theory,credit_lab,faculty_name) VALUES (?,?,?,?,?,?,?)",
                 (prog_id, sem, code, title, th, lab, faculty))
             db.commit()
+            log_audit("course_created", f"Course '{code} — {title}'")
             flash(f"Course '{code} — {title}' added.", "ok")
             return redirect(url_for("admin_courses"))
     return render_template("course_form.html", course=None, **_course_form_values(db))
@@ -1409,6 +1491,7 @@ def admin_course_edit(course_id):
                 "UPDATE courses SET program_id=?,semester_no=?,code=?,title=?,credit_theory=?,credit_lab=?,faculty_name=? WHERE id=?",
                 (prog_id, sem, code, title, th, lab, faculty, course_id))
             db.commit()
+            log_audit("course_updated", f"Course '{code}'")
             flash(f"Course '{code}' updated.", "ok")
             return redirect(url_for("admin_courses"))
     return render_template("course_form.html", course=course, **_course_form_values(db))
@@ -1430,6 +1513,7 @@ def admin_course_delete(course_id):
         return redirect(url_for("admin_courses"))
     db.execute("DELETE FROM courses WHERE id=?", (course_id,))
     db.commit()
+    log_audit("course_deleted", f"Course '{course['code']}'")
     flash(f"Course '{course['code']}' deleted.", "ok")
     return redirect(url_for("admin_courses"))
 
@@ -1628,6 +1712,8 @@ def admin_student_new():
         try:
             sid, pw = create_student(db, data, password=chosen_pw)
             db.commit()
+            log_audit("student_created",
+                      f"Student '{data['name']}' ({data['registration_no']})")
             flash(f"Student '{data['name']}' added. Student login — username: "
                   f"{data['registration_no']} · initial password: {pw} — "
                   f"shown ONCE, note it now.", "ok")
@@ -1682,6 +1768,8 @@ def admin_student_edit(student_id):
                 db.execute("UPDATE users SET display_name=? WHERE student_id=?",
                            (data["name"] or student["name"], student_id))
                 db.commit()
+                log_audit("student_updated",
+                          f"Student '{data['name'] or student['name']}' ({student['registration_no']})")
                 flash(f"Student '{data['name'] or student['name']}' updated.", "ok")
                 return redirect(url_for("admin_students"))
             except Exception as e:
@@ -1703,6 +1791,8 @@ def admin_student_delete(student_id):
     db.execute("DELETE FROM users WHERE student_id=?", (student_id,))
     db.execute("DELETE FROM students WHERE id=?", (student_id,))
     db.commit()
+    log_audit("student_deleted",
+                f"Student '{student['name']}' ({student['registration_no']})")
     flash(f"Student '{student['name']}' ({student['registration_no']}) and their login deleted.", "ok")
     return redirect(url_for("admin_students"))
 
@@ -1719,6 +1809,8 @@ def admin_student_reset_password(student_id):
     db.execute("UPDATE users SET password_hash=? WHERE student_id=?",
                (generate_password_hash(pw), student_id))
     db.commit()
+    log_audit("student_password_reset",
+                f"Password reset for {student['registration_no']} ({student['name']})")
     flash(f"Password reset for {student['registration_no']} ({student['name']}). "
           f"New password: {pw} — shown ONCE, note it now.", "ok")
     return redirect(url_for("admin_students"))
@@ -1831,6 +1923,8 @@ def admin_faculty_new():
         try:
             fid, pw = create_faculty(db, data, password=chosen_pw)
             db.commit()
+            log_audit("faculty_created",
+                      f"Faculty '{data['full_name']}' ({data['email']})")
             flash(f"Faculty member '{data['full_name']}' added. Faculty login — "
                   f"username: {data['email']} · initial password: {pw} — "
                   f"shown ONCE, note it now.", "ok")
@@ -1880,6 +1974,8 @@ def admin_faculty_edit(faculty_id):
                     "WHERE faculty_id=?",
                     (data["email"], data["full_name"], is_active, faculty_id))
                 db.commit()
+                log_audit("faculty_deactivated" if not is_active else "faculty_updated",
+                          f"Faculty '{data['full_name']}' ({data['email']})")
                 flash(f"Faculty member '{data['full_name']}' updated.", "ok")
                 return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
             except Exception as e:
@@ -1899,6 +1995,8 @@ def admin_faculty_reset_password(faculty_id):
     db.execute("UPDATE users SET password_hash=? WHERE faculty_id=?",
                (generate_password_hash(pw), faculty_id))
     db.commit()
+    log_audit("faculty_password_reset",
+                f"Password reset for {fac['email']} ({fac['full_name']})")
     flash(f"Password reset for {fac['email']} ({fac['full_name']}). "
           f"New password: {pw} — shown ONCE, note it now.", "ok")
     return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
@@ -1922,6 +2020,7 @@ def admin_faculty_delete(faculty_id):
     db.execute("DELETE FROM users WHERE faculty_id=?", (faculty_id,))
     db.execute("DELETE FROM faculty WHERE id=?", (faculty_id,))
     db.commit()
+    log_audit("faculty_deleted", f"Faculty '{fac['full_name']}'")
     flash(f"Faculty member '{fac['full_name']}' and their login deleted.", "ok")
     return redirect(url_for("admin_faculty"))
 
@@ -2096,6 +2195,8 @@ def admin_students_import():
         except Exception as e:
             db.rollback()
             skipped.append((lineno, label, "duplicate registration/CNIC" if is_unique_error(e) else str(e)))
+    log_audit("students_imported",
+              f"Excel import: {len(imported)} imported, {len(skipped)} skipped")
     return render_template("student_import_result.html", imported=imported,
                            skipped=skipped, created_logins=created_logins)
 
@@ -2449,6 +2550,7 @@ def admin_fee_head_new():
     else:
         db.insert("INSERT INTO fee_heads (name) VALUES (?)", (name,))
         db.commit()
+        log_audit("fee_head_created", f"Fee head '{name}'")
         flash(f"Fee head '{name}' added.", "ok")
     return redirect(url_for("admin_fee_heads"))
 
@@ -2472,6 +2574,7 @@ def admin_fee_head_edit(head_id):
         else:
             db.execute("UPDATE fee_heads SET name=? WHERE id=?", (name, head_id))
             db.commit()
+            log_audit("fee_head_updated", f"Fee head renamed to '{name}'")
             flash(f"Fee head renamed to '{name}'.", "ok")
             return redirect(url_for("admin_fee_heads"))
     return render_template("fee_head_form.html", head=head)
@@ -2493,6 +2596,7 @@ def admin_fee_head_delete(head_id):
         return redirect(url_for("admin_fee_heads"))
     db.execute("DELETE FROM fee_heads WHERE id=?", (head_id,))
     db.commit()
+    log_audit("fee_head_deleted", f"Fee head '{head['name']}'")
     flash(f"Fee head '{head['name']}' deleted.", "ok")
     return redirect(url_for("admin_fee_heads"))
 
@@ -2564,6 +2668,7 @@ def admin_fee_plan_new():
         pid = _save_fee_plan(db, None, request.form)
         if pid:
             db.commit()
+            log_audit("fee_plan_created", f"Fee plan #{pid}")
             flash("Fee plan created.", "ok")
             return redirect(url_for("admin_fee_plans"))
         db.rollback()
@@ -2581,6 +2686,7 @@ def admin_fee_plan_edit(plan_id):
     if request.method == "POST":
         if _save_fee_plan(db, plan_id, request.form):
             db.commit()
+            log_audit("fee_plan_updated", f"Fee plan #{plan_id}")
             flash("Fee plan updated.", "ok")
             return redirect(url_for("admin_fee_plans"))
         db.rollback()
@@ -2604,6 +2710,7 @@ def admin_fee_plan_delete(plan_id):
     db.execute("DELETE FROM fee_plan_lines WHERE plan_id=?", (plan_id,))
     db.execute("DELETE FROM fee_plans WHERE id=?", (plan_id,))
     db.commit()
+    log_audit("fee_plan_deleted", f"Fee plan '{plan['title']}'")
     flash("Fee plan deleted.", "ok")
     return redirect(url_for("admin_fee_plans"))
 
@@ -2714,6 +2821,8 @@ def admin_voucher_generate():
             else:
                 skipped += 1
         db.commit()
+        log_audit("voucher_generated",
+                  f"{created} voucher(s) created, {skipped} skipped — plan '{plan['title']}'")
         flash(f"Voucher generation complete — created {created}, skipped {skipped} "
               f"(already had a voucher from this plan).", "ok" if created else "error")
         return redirect(url_for("admin_vouchers"))
@@ -2795,6 +2904,8 @@ def admin_voucher_verify(voucher_id):
     if v.get("repeat_request_id"):
         activate_repeat_request(db, v["repeat_request_id"])
     db.commit()
+    log_audit("voucher_verified",
+                f"Challan {v['challan_no']} — Rs {v['amount']:,}")
     flash(f"Voucher {v['challan_no']} verified — marked Paid.", "ok")
     return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
 
@@ -2814,6 +2925,7 @@ def admin_voucher_reject(voucher_id):
     db.execute("UPDATE vouchers SET status='Pending', remarks=? WHERE id=?",
                (remark, voucher_id))
     db.commit()
+    log_audit("voucher_rejected", f"Challan {v['challan_no']}")
     flash(f"Proof for {v['challan_no']} rejected — voucher is Pending again.", "ok")
     return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
 
@@ -2828,6 +2940,9 @@ def admin_voucher_installments(voucher_id):
         return redirect(url_for("admin_vouchers"))
     ok, msg = split_voucher(db, v)
     db.commit() if ok else db.rollback()
+    if ok:
+        log_audit("voucher_split",
+                  f"Challan {v['challan_no']} split into 2 installments")
     flash(msg, "ok" if ok else "error")
     return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
 
@@ -2863,6 +2978,9 @@ def student_voucher_installments(voucher_id):
         return redirect(url_for("student_dashboard", tab="voucher"))
     ok, msg = split_voucher(db, v)
     db.commit() if ok else db.rollback()
+    if ok:
+        log_audit("voucher_split",
+                  f"Challan {v['challan_no']} split into 2 installments")
     flash(msg, "ok" if ok else "error")
     return redirect(url_for("student_dashboard", tab="voucher"))
 
@@ -3128,6 +3246,7 @@ def admin_grade_scale():
                 db.execute("UPDATE grade_bands SET min_marks=?, grade=?, grade_point=? WHERE id=?",
                            (min_f, grade, gp_f, bid))
             db.commit()
+            log_audit("grade_scale_updated", "Grading scale bands updated")
             flash("Grading scale updated — grades are derived from it everywhere.", "ok")
             return redirect(url_for("admin_grade_scale"))
     bands = get_grade_bands(db)
@@ -3155,6 +3274,7 @@ def admin_grade_scale_add():
     db.insert("INSERT INTO grade_bands (min_marks,grade,grade_point) VALUES (?,?,?)",
               (min_f, grade, gp_f))
     db.commit()
+    log_audit("grade_scale_updated", f"Band {grade} (from {min_f:g}) added")
     flash(f"Grade band {grade} (from {min_f:g}) added.", "ok")
     return redirect(url_for("admin_grade_scale"))
 
@@ -3167,6 +3287,7 @@ def admin_grade_scale_delete(band_id):
     if band:
         db.execute("DELETE FROM grade_bands WHERE id=?", (band_id,))
         db.commit()
+        log_audit("grade_scale_updated", f"Band '{band['grade']}' deleted")
         flash(f"Grade band '{band['grade']}' deleted.", "ok")
     return redirect(url_for("admin_grade_scale"))
 
@@ -3277,6 +3398,8 @@ def admin_results_sheet():
         if cleared:
             msg += f", {cleared} cleared"
         msg += "."
+        log_audit("results_saved",
+                  f"Marks sheet {course['code']} sem {semester_no} — {saved} saved, {cleared} cleared")
         flash(msg, "ok")
         for p in problems:
             flash(p, "error")
@@ -3313,6 +3436,8 @@ def admin_results_publish():
            AND (session_id=? OR session_id IS NULL)""",
         (publish, course["id"], semester_no, session_id))
     db.commit()
+    log_audit("results_published" if publish else "results_unpublished",
+              f"{course['code']} sem {semester_no}")
     flash(f"Results for {course['code']} are now "
           f"{'PUBLISHED — students can see them' if publish else 'UNPUBLISHED — hidden from students'}.",
           "ok")
@@ -3432,6 +3557,8 @@ def admin_results_import():
         save_result(db, student, course, session_id, semester_no, marks, False, bands)
         imported.append(reg)
     db.commit()
+    log_audit("results_imported",
+              f"Marks import {course['code']} sem {semester_no} — {len(imported)} imported, {len(skipped)} skipped")
     return render_template("results_import_result.html", imported=imported,
                            skipped=skipped, course=course, session_id=session_id)
 
@@ -3789,6 +3916,7 @@ def student_document_upload():
             (sid, doc_type, f.filename, mime, blob, _now()))
         flash(f"{doc_type} uploaded — it will appear after admin verification.", "ok")
     db.commit()
+    log_audit("document_uploaded", f"{doc_type} — {f.filename}")
     return redirect(url_for("student_dashboard", tab="documents"))
 
 
@@ -3870,6 +3998,8 @@ def admin_document_verify(doc_id):
         (remarks or doc.get("admin_remarks"), _now(),
          session.get("display_name"), doc_id))
     db.commit()
+    log_audit("document_verified",
+                f"{doc['doc_type']} — {doc['file_name']}")
     flash(f"{doc['doc_type']} for {doc['file_name']} marked Verified.", "ok")
     return redirect(url_for("admin_documents"))
 
@@ -3889,6 +4019,8 @@ def admin_document_reject(doc_id):
         "reviewed_at=?, reviewed_by=? WHERE id=?",
         (remarks, _now(), session.get("display_name"), doc_id))
     db.commit()
+    log_audit("document_rejected",
+                f"{doc['doc_type']} — {doc['file_name']}")
     flash(f"{doc['doc_type']} rejected — the student can re-upload it.", "ok")
     return redirect(url_for("admin_documents"))
 
@@ -3937,6 +4069,7 @@ def student_ticket_new():
         "VALUES (?, 'student', ?, ?, ?)",
         (tid, student["name"] if student else session.get("display_name"), body, _now()))
     db.commit()
+    log_audit("ticket_created", f"Ticket #{tid} — {subject}")
     flash(f"Ticket #{tid} created — the admin office will reply here.", "ok")
     return redirect(url_for("student_ticket_thread", ticket_id=tid))
 
@@ -4094,6 +4227,8 @@ def admin_notification_new():
                 (title, body, _today(), audience, published,
                  session.get("display_name"), _now()))
             db.commit()
+            log_audit("notification_published" if published else "notification_created",
+                      f"Notification '{title}'")
             flash(f"Notification '{title}' saved.", "ok")
             return redirect(url_for("admin_notifications"))
     return render_template("notification_form.html", notif=None,
@@ -4121,6 +4256,7 @@ def admin_notification_edit(notif_id):
                 (title, body, audience, published,
                  _today() if published else notif.get("published_at"), notif_id))
             db.commit()
+            log_audit("notification_updated", f"Notification '{title}'")
             flash(f"Notification '{title}' updated.", "ok")
             return redirect(url_for("admin_notifications"))
     return render_template("notification_form.html", notif=notif,
@@ -4140,6 +4276,8 @@ def admin_notification_toggle(notif_id):
         "UPDATE notifications SET is_published=?, published_at=? WHERE id=?",
         (new_state, _today() if new_state else notif.get("published_at"), notif_id))
     db.commit()
+    log_audit("notification_published" if new_state else "notification_unpublished",
+              f"Notification '{notif['title']}'")
     flash(f"Notification '{notif['title']}' is now "
           f"{'Published' if new_state else 'Unpublished'}.", "ok")
     return redirect(url_for("admin_notifications"))
@@ -4155,6 +4293,7 @@ def admin_notification_delete(notif_id):
         return redirect(url_for("admin_notifications"))
     db.execute("DELETE FROM notifications WHERE id=?", (notif_id,))
     db.commit()
+    log_audit("notification_deleted", f"Notification '{notif['title']}'")
     flash(f"Notification '{notif['title']}' deleted.", "ok")
     return redirect(url_for("admin_notifications"))
 
@@ -4196,6 +4335,8 @@ def admin_repository_upload():
          session.get("display_name"), _now(),
          1 if request.form.get("is_published") else 0))
     db.commit()
+    log_audit("repository_published" if request.form.get("is_published") else "repository_uploaded",
+                f"Repository document '{title}'")
     flash(f"Repository document '{title}' uploaded.", "ok")
     return redirect(url_for("admin_repository"))
 
@@ -4212,6 +4353,8 @@ def admin_repository_toggle(doc_id):
     db.execute("UPDATE repository_docs SET is_published=? WHERE id=?",
                (new_state, doc_id))
     db.commit()
+    log_audit("repository_published" if new_state else "repository_unpublished",
+                f"Repository document '{doc['title']}'")
     flash(f"'{doc['title']}' is now {'Published' if new_state else 'Unpublished'}.", "ok")
     return redirect(url_for("admin_repository"))
 
@@ -4405,6 +4548,8 @@ def faculty_course_marks(assignment_id):
                         a["semester_no"], marks, False, bands)
             saved += 1
         db.commit()
+        log_audit("results_saved",
+                  f"Faculty marks {course['code']} sem {a['semester_no']} — {saved} saved")
         flash(f"Marks saved — {saved} result(s) recorded. They stay "
               f"UNPUBLISHED (hidden from students) until the admin publishes them.", "ok")
         for p in problems:
@@ -4887,6 +5032,7 @@ def student_clearance_apply():
              action_by, action_at, 0, now))
     _sync_clearance_status(db, req_id)
     db.commit()
+    log_audit("clearance_applied", "Clearance application submitted")
     flash("Clearance application submitted. Each unit will now review it.",
           "ok")
     return redirect(url_for("student_clearance"))
@@ -4909,6 +5055,7 @@ def student_clearance_recheck(item_id):
         "WHERE id=?", (item_id,))
     _sync_clearance_status(db, item["request_id"])
     db.commit()
+    log_audit("clearance_recheck_requested", f"Unit '{item['unit_name']}'")
     flash(f"Recheck requested for {item['unit_name']}.", "ok")
     return redirect(url_for("student_clearance"))
 
@@ -5071,6 +5218,8 @@ def admin_clearance_item_clear(item_id):
             (session.get("display_name"), _now(), item_id))
     _sync_clearance_status(db, item["request_id"])
     db.commit()
+    log_audit("clearance_item_cleared",
+                f"Unit '{item['unit_name']}' (request #{item['request_id']})")
     flash(f"{item['unit_name']} cleared.", "ok")
     return redirect(url_for("admin_clearance_detail",
                             request_id=item["request_id"]))
@@ -5096,6 +5245,8 @@ def admin_clearance_item_object(item_id):
         (remark, session.get("display_name"), _now(), item_id))
     _sync_clearance_status(db, item["request_id"])
     db.commit()
+    log_audit("clearance_item_objected",
+                f"Unit '{item['unit_name']}' (request #{item['request_id']})")
     flash(f"Objection recorded for {item['unit_name']}.", "ok")
     return redirect(url_for("admin_clearance_detail",
                             request_id=item["request_id"]))
@@ -5142,6 +5293,7 @@ def admin_clearance_units():
                 "INSERT INTO clearance_units (name,sort_order,is_active,"
                 "is_accounts) VALUES (?,?,1,0)", (name, top + 1))
             db.commit()
+            log_audit("clearance_units_changed", f"Unit '{name}' added")
             flash(f"Clearance unit '{name}' added.", "ok")
         return redirect(url_for("admin_clearance_units"))
     units = db.execute(
@@ -5170,6 +5322,7 @@ def admin_clearance_unit_rename(unit_id):
         db.execute("UPDATE clearance_units SET name=? WHERE id=?",
                    (name, unit_id))
         db.commit()
+        log_audit("clearance_units_changed", f"Unit renamed to '{name}'")
         flash(f"Unit renamed to '{name}'.", "ok")
     return redirect(url_for("admin_clearance_units"))
 
@@ -5186,6 +5339,8 @@ def admin_clearance_unit_toggle(unit_id):
     db.execute("UPDATE clearance_units SET is_active=? WHERE id=?",
                (new_state, unit_id))
     db.commit()
+    log_audit("clearance_units_changed",
+              f"Unit '{unit['name']}' {'activated' if new_state else 'deactivated'}")
     flash(f"Unit '{unit['name']}' "
           f"{'activated' if new_state else 'deactivated'}.", "ok")
     return redirect(url_for("admin_clearance_units"))
@@ -5536,6 +5691,7 @@ def student_scholarship_apply(scheme_id):
                   f"{sess['name']}.", "error")
             return redirect(url_for("student_scholarships"))
         raise
+    log_audit("scholarship_applied", f"Scheme '{scheme['name']}'")
     flash(f"Application submitted for '{scheme['name']}' "
           f"({sess['name']}).", "ok")
     return redirect(url_for("student_scholarships"))
@@ -5569,6 +5725,7 @@ def admin_scholarship_scheme_new():
                 (v["name"], v["provider"], v["description"],
                  v["eligibility"], v["is_open"], v["deadline"], _now()))
             db.commit()
+            log_audit("scholarship_scheme_created", f"Scheme '{v['name']}'")
             flash(f"Scholarship scheme '{v['name']}' added.", "ok")
             return redirect(url_for("admin_scholarships"))
     return render_template("scholarship_scheme_form.html", scheme=None)
@@ -5596,6 +5753,7 @@ def admin_scholarship_scheme_edit(scheme_id):
                 (v["name"], v["provider"], v["description"],
                  v["eligibility"], v["is_open"], v["deadline"], scheme_id))
             db.commit()
+            log_audit("scholarship_scheme_updated", f"Scheme '{v['name']}'")
             flash(f"Scholarship scheme '{v['name']}' updated.", "ok")
             return redirect(url_for("admin_scholarships"))
     return render_template("scholarship_scheme_form.html", scheme=scheme)
@@ -5621,6 +5779,7 @@ def admin_scholarship_scheme_delete(scheme_id):
         return redirect(url_for("admin_scholarships"))
     db.execute("DELETE FROM scholarship_schemes WHERE id=?", (scheme_id,))
     db.commit()
+    log_audit("scholarship_scheme_deleted", f"Scheme '{scheme['name']}'")
     flash(f"Scholarship scheme '{scheme['name']}' deleted.", "ok")
     return redirect(url_for("admin_scholarships"))
 
@@ -5699,6 +5858,8 @@ def admin_scholarship_decide(app_id):
             "UPDATE scholarship_applications SET status='Under Review' "
             "WHERE id=?", (app_id,))
         db.commit()
+        log_audit("scholarship_application_decided",
+                  f"Application #{app_id} — Under Review")
         flash("Application marked Under Review.", "ok")
         return back
     if decision == "Approve":
@@ -5714,6 +5875,8 @@ def admin_scholarship_decide(app_id):
             (amount, remarks or None, session.get("display_name"), _now(),
              app_id))
         db.commit()
+        log_audit("scholarship_application_decided",
+                  f"Application #{app_id} — Approved, Rs {amount:,}")
         flash(f"Application approved — award of Rs {amount:,} recorded. "
               "(The award is recorded here only; it does not post to the "
               "fee ledger.)", "ok")
@@ -5729,6 +5892,8 @@ def admin_scholarship_decide(app_id):
                decided_at=? WHERE id=?""",
             (remarks, session.get("display_name"), _now(), app_id))
         db.commit()
+        log_audit("scholarship_application_decided",
+                  f"Application #{app_id} — Rejected")
         flash("Application rejected.", "ok")
         return back
     flash("Please choose a decision.", "error")
@@ -5972,6 +6137,7 @@ def student_repeat_apply():
         (sid, course["id"], att.get("session_id"), target["id"], kind,
          reason or None, "Requested", _now()))
     db.commit()
+    log_audit("repeat_requested", f"{kind} — {course['code']}")
     flash(f"{kind} request for {course['code']} submitted — the admin "
           f"office will review it and issue the fee voucher on approval.",
           "ok")
@@ -5995,6 +6161,7 @@ def student_repeat_cancel(req_id):
     db.execute("UPDATE repeat_requests SET status='Cancelled' WHERE id=?",
                (req_id,))
     db.commit()
+    log_audit("repeat_request_cancelled", f"Request #{req_id}")
     flash("Repeat request cancelled.", "ok")
     return redirect(url_for("student_repeat"))
 
@@ -6037,6 +6204,7 @@ def admin_repeat_rate():
         return redirect(url_for("admin_repeat"))
     set_setting(db, "repeat_fee_per_ch", str(rate))
     db.commit()
+    log_audit("repeat_rate_updated", f"Repeat fee per credit hour: Rs {rate:,}")
     flash(f"Repeat fee updated to Rs {rate:,} per credit hour — this "
           f"applies to vouchers issued from now on; vouchers already "
           f"issued keep their amount.", "ok")
@@ -6071,6 +6239,8 @@ def admin_repeat_approve(req_id):
         (vid, session.get("display_name"), _now(), req_id))
     db.commit()
     v = get_voucher(db, vid)
+    log_audit("repeat_request_approved",
+              f"Request #{req_id} — voucher {v['challan_no']}")
     flash(f"Request approved — repeat voucher {v['challan_no']} of "
           f"Rs {v['amount']:,} issued to {student['name']}. The student "
           f"is enrolled automatically once the payment is verified.",
@@ -6101,6 +6271,7 @@ def admin_repeat_reject(req_id):
            decided_by=?, decided_at=? WHERE id=?""",
         (remarks, session.get("display_name"), _now(), req_id))
     db.commit()
+    log_audit("repeat_request_rejected", f"Request #{req_id}")
     flash("Repeat request rejected.", "ok")
     return back
 
@@ -6301,6 +6472,7 @@ def admin_timetable_new():
              cand["course_id"], cand["faculty_id"], cand["day_of_week"],
              cand["start_time"], cand["end_time"], cand["room"], _now()))
         db.commit()
+        log_audit("timetable_slot_created", "Timetable slot added")
         flash("Timetable slot added.", "ok")
         return redirect(url_for(
             "admin_timetable", program_id=cand["program_id"],
@@ -6354,6 +6526,7 @@ def admin_timetable_edit(slot_id):
              cand["course_id"], cand["faculty_id"], cand["day_of_week"],
              cand["start_time"], cand["end_time"], cand["room"], slot_id))
         db.commit()
+        log_audit("timetable_slot_updated", f"Slot #{slot_id}")
         flash("Timetable slot updated.", "ok")
         return redirect(url_for("admin_timetable", **back))
     ctx = _slot_form_context(db, slot["program_id"], slot["semester"],
@@ -6376,6 +6549,7 @@ def admin_timetable_delete(slot_id):
             "session_id": slot["session_id"]}
     db.execute("DELETE FROM timetable_slots WHERE id=?", (slot_id,))
     db.commit()
+    log_audit("timetable_slot_deleted", f"Slot #{slot_id}")
     flash("Timetable slot deleted.", "ok")
     return redirect(url_for("admin_timetable", **back))
 
@@ -6574,6 +6748,7 @@ def admin_transport_new():
             (v["name"], v["title"] or None, v["description"] or None,
              v["is_active"], _now()))
         db.commit()
+        log_audit("transport_route_created", f"Route '{v['name']}'")
         flash("Transport route created — now add its stops.", "ok")
         return redirect(url_for("admin_transport"))
     return render_template("transport_route_form.html",
@@ -6599,6 +6774,7 @@ def admin_transport_edit(route_id):
             (v["name"], v["title"] or None, v["description"] or None,
              v["is_active"], route_id))
         db.commit()
+        log_audit("transport_route_updated", f"Route '{v['name']}'")
         flash("Transport route updated.", "ok")
         return redirect(url_for("admin_transport"))
     return render_template("transport_route_form.html", route=route,
@@ -6622,6 +6798,7 @@ def admin_transport_delete(route_id):
         return redirect(url_for("admin_transport_stops", route_id=route_id))
     db.execute("DELETE FROM transport_routes WHERE id=?", (route_id,))
     db.commit()
+    log_audit("transport_route_deleted", f"Route '{route['name']}'")
     flash("Transport route deleted.", "ok")
     return redirect(url_for("admin_transport"))
 
@@ -6670,6 +6847,7 @@ def admin_transport_stop_add(route_id):
            sort_order) VALUES (?,?,?,?)""",
         (route_id, v["stop_name"], v["pickup_time"], v["sort_order"]))
     db.commit()
+    log_audit("transport_stop_added", f"Stop '{v['stop_name']}'")
     flash("Stop added.", "ok")
     return redirect(url_for("admin_transport_stops", route_id=route_id))
 
@@ -6696,6 +6874,7 @@ def admin_transport_stop_edit(route_id, stop_id):
            sort_order=? WHERE id=?""",
         (v["stop_name"], v["pickup_time"], v["sort_order"], stop_id))
     db.commit()
+    log_audit("transport_stop_updated", f"Stop '{v['stop_name']}'")
     flash("Stop updated.", "ok")
     return redirect(url_for("admin_transport_stops", route_id=route_id))
 
@@ -6709,6 +6888,7 @@ def admin_transport_stop_delete(route_id, stop_id):
         abort(404)
     db.execute("DELETE FROM transport_stops WHERE id=?", (stop_id,))
     db.commit()
+    log_audit("transport_stop_deleted", f"Route #{route_id} stop #{stop_id}")
     flash("Stop deleted.", "ok")
     return redirect(url_for("admin_transport_stops", route_id=route_id))
 
@@ -6798,6 +6978,7 @@ def admin_campus():
         for k, v in values.items():
             set_setting(db, k, v)
         db.commit()
+        log_audit("campus_settings_saved", "Campus Life links & info saved")
         flash("Campus Life links & info saved.", "ok")
         return redirect(url_for("admin_campus"))
     return render_template("admin_campus.html", values=_campus_values(db),
@@ -6853,6 +7034,7 @@ def student_society_join(society_id):
                    decided_by=NULL, decided_at=NULL, created_at=?
                    WHERE id=?""", (_now(), existing["id"]))
             db.commit()
+            log_audit("society_joined", f"{soc['name']} — requested again")
             flash(f"Membership of {soc['name']} requested again — "
                   "waiting for approval.", "ok")
         else:
@@ -6864,6 +7046,7 @@ def student_society_join(society_id):
            created_at) VALUES (?,?,?,?)""",
         (society_id, sid, "Requested", _now()))
     db.commit()
+    log_audit("society_joined", f"{soc['name']} — join requested")
     flash(f"Membership of {soc['name']} requested — waiting for "
           "approval.", "ok")
     return redirect(url_for("student_campus"))
@@ -6894,6 +7077,7 @@ def admin_society_new():
             (v["name"], v["description"] or None, v["advisor_faculty_id"],
              v["is_active"], _now()))
         db.commit()
+        log_audit("society_created", f"Society '{v['name']}'")
         flash("Society created.", "ok")
         return redirect(url_for("admin_societies"))
     return render_template("society_form.html", society={"is_active": 1},
@@ -6921,6 +7105,7 @@ def admin_society_edit(society_id):
             (v["name"], v["description"] or None, v["advisor_faculty_id"],
              v["is_active"], society_id))
         db.commit()
+        log_audit("society_updated", f"Society '{v['name']}'")
         flash("Society saved.", "ok")
         return redirect(url_for("admin_societies"))
     return render_template("society_form.html", society=soc,
@@ -6944,6 +7129,7 @@ def admin_society_delete(society_id):
         return redirect(url_for("admin_societies"))
     db.execute("DELETE FROM societies WHERE id=?", (society_id,))
     db.commit()
+    log_audit("society_deleted", f"Society '{soc['name']}'")
     flash("Society deleted.", "ok")
     return redirect(url_for("admin_societies"))
 
@@ -6981,6 +7167,7 @@ def admin_society_member_decide(society_id, member_id, action):
     if action == "remove":
         db.execute("DELETE FROM society_members WHERE id=?", (member_id,))
         db.commit()
+        log_audit("society_membership_decided", f"Removed — {soc['name']}")
         flash("Membership removed.", "ok")
         return back
     if action not in ("approve", "reject"):
@@ -6995,6 +7182,7 @@ def admin_society_member_decide(society_id, member_id, action):
         ("Approved" if action == "approve" else "Rejected",
          session.get("display_name"), _now(), member_id))
     db.commit()
+    log_audit("society_membership_decided", f"{action} — {soc['name']}")
     flash("Membership approved." if action == "approve"
           else "Membership rejected.", "ok")
     return back
@@ -7065,6 +7253,7 @@ def student_vehicle_apply():
         (sid, vtype, vno, make_model or None, color or None,
          "Requested", _now()))
     db.commit()
+    log_audit("vehicle_pass_applied", f"{vno} ({vtype})")
     flash("Vehicle entry pass requested — waiting for admin approval.",
           "ok")
     return back
@@ -7135,6 +7324,8 @@ def admin_vehicle_approve(pass_id):
          (request.form.get("admin_remarks") or "").strip() or None,
          session.get("display_name"), _now(), pass_id))
     db.commit()
+    log_audit("vehicle_pass_approved",
+                f"{pass_no} — {vp['vehicle_no']}, valid till {valid_till}")
     flash(f"Pass {pass_no} approved (valid till {valid_till}).", "ok")
     return back
 
@@ -7161,6 +7352,7 @@ def admin_vehicle_reject(pass_id):
            decided_by=?, decided_at=? WHERE id=?""",
         (remarks, session.get("display_name"), _now(), pass_id))
     db.commit()
+    log_audit("vehicle_pass_rejected", f"{vp['vehicle_no']}")
     flash("Vehicle pass rejected.", "ok")
     return back
 
@@ -7269,6 +7461,572 @@ def student_vehicle_pass_pdf(pass_id):
                      as_attachment=True,
                      download_name=f"vehicle-pass-{vp['pass_no']}.pdf",
                      mimetype="application/pdf")
+
+
+# ================================================================ v0.14 REPORTS,
+# AUDIT LOG & BACKUP
+# Reports centre: four admin reports whose figures come from the SAME
+# computations as the screens they summarise (the ledger behind the
+# Account Statement, result_grade_gp for grades, the shared
+# attendance_summary helper), each with an Excel export. The audit log
+# is append-only: log_audit() above is its only writer. Backup is a
+# ZIP with one workbook (a sheet per table — password hashes are never
+# included) plus the stored file blobs; restore is manual by design.
+
+XLSX_MIME = ("application/vnd.openxmlformats-officedocument."
+             "spreadsheetml.sheet")
+
+
+def _xlsx_download(wb, filename):
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=filename,
+                     mimetype=XLSX_MIME)
+
+
+def _report_session(db):
+    """Session for a report: the explicit ?session_id= when valid,
+    else the current session (the same rule as the rest of the app)."""
+    sid = _int_or_none(request.args.get("session_id"))
+    if sid:
+        row = db.execute("SELECT * FROM academic_sessions WHERE id=?",
+                         (sid,)).fetchone()
+        if row:
+            return row
+    return current_session(db)
+
+
+# ------------------------------------------------------------- fee collection
+def _fee_report(db, sess):
+    """Fee collection figures for one session, computed from the
+    append-only ledger joined to that session's vouchers — exactly the
+    Account Statement semantics (a split reverses the parent debit and
+    debits the children, so ledger sums are always the live totals)."""
+    data = {"session": sess, "issued_count": 0, "issued_rs": 0,
+            "collected_rs": 0, "outstanding_rs": 0, "pending_proof": 0,
+            "paid_rs": 0, "cross_outstanding": 0,
+            "departments": [], "defaulters": []}
+    if not sess:
+        return data
+    sid = sess["id"]
+    vouchers = db.execute("SELECT * FROM vouchers WHERE session_id=?",
+                          (sid,)).fetchall()
+    live = [v for v in vouchers if v["status"] != "Split into Installments"]
+    data["issued_count"] = len(live)
+    data["pending_proof"] = sum(
+        1 for v in vouchers if v["status"] == "Proof Submitted")
+    data["paid_rs"] = sum(v["amount"] or 0 for v in live
+                           if v["status"] == "Paid")
+    agg = db.execute(
+        """SELECT COALESCE(SUM(l.debit),0) d, COALESCE(SUM(l.credit),0) c
+           FROM ledger_entries l JOIN vouchers v ON v.id=l.voucher_id
+           WHERE v.session_id=?""", (sid,)).fetchone()
+    data["issued_rs"] = agg["d"] or 0
+    data["collected_rs"] = agg["c"] or 0
+    data["outstanding_rs"] = data["issued_rs"] - data["collected_rs"]
+    # per-student figures for THIS session's vouchers only
+    per = {}
+    for r in db.execute(
+            """SELECT l.student_id sid, COALESCE(SUM(l.debit),0) d,
+                      COALESCE(SUM(l.credit),0) c
+               FROM ledger_entries l JOIN vouchers v ON v.id=l.voucher_id
+               WHERE v.session_id=? GROUP BY l.student_id""",
+            (sid,)).fetchall():
+        per[r["sid"]] = {"issued": r["d"] or 0, "collected": r["c"] or 0}
+    students = {s["id"]: s for s in db.execute(
+        """SELECT s.*, d.name dept_name FROM students s
+           LEFT JOIN departments d ON d.id=s.department_id""").fetchall()}
+    by_dept = {}
+    for st_id, f in per.items():
+        st = students.get(st_id)
+        dept = (st["dept_name"] if st else None) or "—"
+        d = by_dept.setdefault(dept, {"department": dept, "issued": 0,
+                                       "collected": 0, "outstanding": 0})
+        d["issued"] += f["issued"]
+        d["collected"] += f["collected"]
+        d["outstanding"] += f["issued"] - f["collected"]
+    data["departments"] = sorted(by_dept.values(),
+                                  key=lambda d: d["department"])
+    in_session = [s for s in students.values()
+                  if s.get("session_id") == sid]
+    def _out(st_id):
+        f = per.get(st_id)
+        return (f["issued"] - f["collected"]) if f else 0
+    data["cross_outstanding"] = sum(_out(s["id"]) for s in in_session)
+    defaulters = [{"name": s["name"],
+                   "registration_no": s["registration_no"],
+                   "department": s["dept_name"] or "—",
+                   "phone": s.get("phone") or "—",
+                   "outstanding": _out(s["id"])}
+                  for s in in_session if _out(s["id"]) > 0]
+    data["defaulters"] = sorted(defaulters,
+                                 key=lambda d: -d["outstanding"])
+    return data
+
+
+@app.route("/admin/reports")
+@role_required("admin")
+def admin_reports():
+    db = get_db()
+    last_backup = db.execute(
+        "SELECT created_at FROM audit_log WHERE action='backup_downloaded' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    audit_count = db.execute(
+        "SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
+    return render_template("admin_reports.html", generated=_now(),
+                           last_backup=(last_backup["created_at"]
+                                        if last_backup else None),
+                           audit_count=audit_count)
+
+
+@app.route("/admin/reports/fees")
+@role_required("admin")
+def admin_report_fees():
+    db = get_db()
+    sess = _report_session(db)
+    return render_template(
+        "admin_report_fees.html", generated=_now(),
+        sessions=session_options(db), sess=sess,
+        rep=_fee_report(db, sess))
+
+
+@app.route("/admin/reports/fees.xlsx")
+@role_required("admin")
+def admin_report_fees_xlsx():
+    db = get_db()
+    sess = _report_session(db)
+    rep = _fee_report(db, sess)
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    ws.append(["Fee Collection Report"])
+    ws.append(["Session", sess["name"] if sess else "—"])
+    ws.append(["Generated On", _now()])
+    ws.append(["Challans Issued", rep["issued_count"]])
+    ws.append(["Total Issued (Rs)", rep["issued_rs"]])
+    ws.append(["Total Collected (Rs)", rep["collected_rs"]])
+    ws.append(["Total Outstanding (Rs)", rep["outstanding_rs"]])
+    ws.append(["Pending Proofs", rep["pending_proof"]])
+    ws2 = wb.create_sheet("By Department")
+    ws2.append(["Department", "Issued (Rs)", "Collected (Rs)",
+                "Outstanding (Rs)"])
+    for d in rep["departments"]:
+        ws2.append([d["department"], d["issued"], d["collected"],
+                    d["outstanding"]])
+    ws3 = wb.create_sheet("Defaulters")
+    ws3.append(["Name", "Registration No", "Department", "Phone",
+                "Outstanding (Rs)"])
+    for d in rep["defaulters"]:
+        ws3.append([d["name"], d["registration_no"], d["department"],
+                    d["phone"], d["outstanding"]])
+    return _xlsx_download(wb, "fee-collection-report.xlsx")
+
+
+# ------------------------------------------------------------- student strength
+def _students_report(db):
+    total = db.execute("SELECT COUNT(*) c FROM students").fetchone()["c"]
+
+    def breakdown(sql):
+        return [{"label": r["label"], "count": r["c"]} for r in
+                db.execute(sql).fetchall()]
+
+    by_dept = breakdown(
+        """SELECT COALESCE(d.name,'—') label, COUNT(*) c FROM students s
+           LEFT JOIN departments d ON d.id=s.department_id
+           GROUP BY label ORDER BY c DESC, label""")
+    by_prog = breakdown(
+        """SELECT COALESCE(p.name,'—') label, COUNT(*) c FROM students s
+           LEFT JOIN programs p ON p.id=s.program_id
+           GROUP BY label ORDER BY c DESC, label""")
+    by_sess = breakdown(
+        """SELECT COALESCE(ss.name, s.session_name, '—') label, COUNT(*) c
+           FROM students s
+           LEFT JOIN academic_sessions ss ON ss.id=s.session_id
+           GROUP BY label ORDER BY c DESC, label""")
+    by_gender = breakdown(
+        """SELECT COALESCE(NULLIF(s.gender,''),'Not recorded') label,
+                  COUNT(*) c FROM students s
+           GROUP BY label ORDER BY c DESC, label""")
+    programs = db.execute("SELECT * FROM programs ORDER BY name").fetchall()
+    sessions = db.execute(
+        "SELECT * FROM academic_sessions ORDER BY id").fetchall()
+    counts = {}
+    for r in db.execute(
+            """SELECT program_id, session_id, COUNT(*) c FROM students
+               GROUP BY program_id, session_id""").fetchall():
+        counts[(r["program_id"], r["session_id"])] = r["c"]
+    matrix = []
+    for p in programs:
+        cells = [counts.get((p["id"], s["id"]), 0) for s in sessions]
+        matrix.append({"program": p["name"], "cells": cells,
+                       "total": sum(cells)})
+    return {"total": total, "by_department": by_dept,
+            "by_program": by_prog, "by_session": by_sess,
+            "by_gender": by_gender, "sessions": sessions,
+            "matrix": matrix}
+
+
+@app.route("/admin/reports/students")
+@role_required("admin")
+def admin_report_students():
+    db = get_db()
+    return render_template("admin_report_students.html", generated=_now(),
+                           rep=_students_report(db))
+
+
+@app.route("/admin/reports/students.xlsx")
+@role_required("admin")
+def admin_report_students_xlsx():
+    db = get_db()
+    rep = _students_report(db)
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    ws.append(["Student Strength Report"])
+    ws.append(["Generated On", _now()])
+    ws.append(["Total Students", rep["total"]])
+    for title, rows in (("By Department", rep["by_department"]),
+                        ("By Program", rep["by_program"]),
+                        ("By Session", rep["by_session"]),
+                        ("By Gender", rep["by_gender"])):
+        w = wb.create_sheet(title)
+        w.append([title.replace("By ", ""), "Students"])
+        for r in rows:
+            w.append([r["label"], r["count"]])
+    wm = wb.create_sheet("Program x Session")
+    wm.append(["Program"] + [s["name"] for s in rep["sessions"]]
+              + ["Total"])
+    for row in rep["matrix"]:
+        wm.append([row["program"]] + row["cells"] + [row["total"]])
+    return _xlsx_download(wb, "student-strength-report.xlsx")
+
+
+# ------------------------------------------------------------- results summary
+def _results_report(db, sess):
+    rows = []
+    if not sess:
+        return rows
+    bands = get_grade_bands(db)
+    groups = {}
+    for r in db.execute(
+            """SELECT r.*, c.code, c.title FROM results r
+               JOIN courses c ON c.id=r.course_id
+               WHERE r.session_id=? ORDER BY c.code, r.semester_no""",
+            (sess["id"],)).fetchall():
+        groups.setdefault((r["course_id"], r["semester_no"]),
+                          []).append(r)
+    for (cid, sem), rs in groups.items():
+        appeared = len(rs)
+        passed = 0
+        marks = []
+        for r in rs:
+            grade, _gp = result_grade_gp(r, bands)
+            if grade and grade != "F":
+                passed += 1
+            if not r.get("is_absent") and r.get("marks_obtained") is not None:
+                marks.append(float(r["marks_obtained"]))
+        state, _pub, _tot = _result_set_state(db, cid, sem, sess["id"])
+        rows.append({
+            "course_code": rs[0]["code"], "course_title": rs[0]["title"],
+            "semester_no": sem, "appeared": appeared, "passed": passed,
+            "failed": appeared - passed,
+            "pass_pct": round(passed / appeared * 100, 1) if appeared else 0.0,
+            "avg_marks": (round(sum(marks) / len(marks), 1)
+                          if marks else None),
+            "highest": max(marks) if marks else None,
+            "published": "Yes" if state == "Published" else "No"})
+    return rows
+
+
+@app.route("/admin/reports/results")
+@role_required("admin")
+def admin_report_results():
+    db = get_db()
+    sess = _report_session(db)
+    return render_template(
+        "admin_report_results.html", generated=_now(),
+        sessions=session_options(db), sess=sess,
+        rows=_results_report(db, sess))
+
+
+@app.route("/admin/reports/results.xlsx")
+@role_required("admin")
+def admin_report_results_xlsx():
+    db = get_db()
+    sess = _report_session(db)
+    rows = _results_report(db, sess)
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Results Summary"
+    ws.append(["Results Summary — " + (sess["name"] if sess else "—")])
+    ws.append(["Generated On", _now()])
+    ws.append(["Course", "Title", "Semester", "Appeared", "Passed",
+               "Failed", "Pass %", "Average Marks", "Highest Marks",
+               "Published"])
+    for r in rows:
+        ws.append([r["course_code"], r["course_title"], r["semester_no"],
+                   r["appeared"], r["passed"], r["failed"], r["pass_pct"],
+                   r["avg_marks"], r["highest"], r["published"]])
+    return _xlsx_download(wb, "results-summary-report.xlsx")
+
+
+# ------------------------------------------------------------- attendance summary
+def _attendance_report(db, sess):
+    rows = []
+    if not sess:
+        return rows
+    for a in db.execute(
+            """SELECT a.*, c.code course_code, c.title course_title,
+                      c.program_id, c.semester_no,
+                      f.full_name teacher_name, p.name prog_name
+               FROM course_assignments a
+               JOIN courses c ON c.id=a.course_id
+               LEFT JOIN programs p ON p.id=c.program_id
+               LEFT JOIN faculty f ON f.id=a.faculty_id
+               WHERE a.session_id=? ORDER BY c.code""",
+            (sess["id"],)).fetchall():
+        classes_held, srows = _attendance_summary_rows(db, a)
+        avg = (round(sum(r["pct"] for r in srows) / len(srows), 1)
+               if srows else 0.0)
+        rows.append({"course_code": a["course_code"],
+                     "course_title": a["course_title"],
+                     "teacher_name": a["teacher_name"] or "—",
+                     "prog_name": a["prog_name"] or "—",
+                     "semester_no": a["semester_no"],
+                     "classes_held": classes_held,
+                     "students": len(srows), "avg_pct": avg})
+    return rows
+
+
+@app.route("/admin/reports/attendance")
+@role_required("admin")
+def admin_report_attendance():
+    db = get_db()
+    sess = _report_session(db)
+    return render_template(
+        "admin_report_attendance.html", generated=_now(),
+        sessions=session_options(db), sess=sess,
+        rows=_attendance_report(db, sess))
+
+
+@app.route("/admin/reports/attendance.xlsx")
+@role_required("admin")
+def admin_report_attendance_xlsx():
+    db = get_db()
+    sess = _report_session(db)
+    rows = _attendance_report(db, sess)
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Attendance Summary"
+    ws.append(["Attendance Summary — " + (sess["name"] if sess else "—")])
+    ws.append(["Generated On", _now()])
+    ws.append(["Course", "Title", "Teacher", "Semester", "Classes Held",
+               "Students", "Average Attendance %"])
+    for r in rows:
+        ws.append([r["course_code"], r["course_title"], r["teacher_name"],
+                   r["semester_no"], r["classes_held"], r["students"],
+                   r["avg_pct"]])
+    return _xlsx_download(wb, "attendance-summary-report.xlsx")
+
+
+# ------------------------------------------------------------- audit log viewer
+@app.route("/admin/audit")
+@role_required("admin")
+def admin_audit():
+    db = get_db()
+    q = (request.args.get("q") or "").strip()
+    role = (request.args.get("role") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+    clauses, params = [], []
+    if q:
+        like = f"%{q}%"
+        clauses.append(f"(username {LIKE} ? OR action {LIKE} ? OR "
+                       f"details {LIKE} ?)")
+        params += [like, like, like]
+    if role:
+        clauses.append("role=?")
+        params.append(role)
+    if date_from:
+        clauses.append("substr(created_at,1,10)>=?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("substr(created_at,1,10)<=?")
+        params.append(date_to)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    total = db.execute(f"SELECT COUNT(*) c FROM audit_log{where}",
+                       params).fetchone()["c"]
+    rows = db.execute(
+        f"SELECT * FROM audit_log{where} ORDER BY id DESC LIMIT 300",
+        params).fetchall()
+    roles = [r["role"] for r in db.execute(
+        "SELECT DISTINCT role FROM audit_log WHERE role<>'' "
+        "ORDER BY role").fetchall()]
+    return render_template(
+        "admin_audit.html", rows=rows, total=total, capped=total > 300,
+        roles=roles, q=q, role=role, date_from=date_from, date_to=date_to,
+        generated=_now())
+
+
+# ------------------------------------------------------------- backup
+# (table, sheet name) — a sheet is included only when the table exists.
+BACKUP_SHEETS = [
+    ("departments", "departments"), ("programs", "programs"),
+    ("academic_sessions", "sessions"), ("courses", "courses"),
+    ("students", "students"), ("faculty", "faculty"),
+    ("users", "users"), ("certificates", "certificates"),
+    ("enrollments", "enrollments"), ("results", "results"),
+    ("fee_heads", "fee_heads"), ("fee_plans", "fee_plans"),
+    ("fee_plan_lines", "fee_plan_lines"), ("vouchers", "vouchers"),
+    ("ledger_entries", "ledger"), ("grade_bands", "grade_bands"),
+    ("student_documents", "student_documents"), ("tickets", "tickets"),
+    ("ticket_messages", "ticket_messages"),
+    ("repository_docs", "repository_docs"),
+    ("notifications", "notifications"),
+    ("course_assignments", "course_assignments"),
+    ("attendance", "attendance"),
+    ("clearance_units", "clearance_units"),
+    ("clearance_requests", "clearance_requests"),
+    ("clearance_items", "clearance_items"),
+    ("scholarship_schemes", "scholarship_schemes"),
+    ("scholarship_profiles", "scholarship_profiles"),
+    ("scholarship_applications", "scholarship_applications"),
+    ("repeat_requests", "repeat_requests"),
+    ("timetable_slots", "timetable_slots"),
+    ("transport_routes", "transport_routes"),
+    ("transport_stops", "transport_stops"),
+    ("societies", "societies"), ("society_members", "society_members"),
+    ("vehicle_passes", "vehicle_passes"),
+    ("app_settings", "app_settings"), ("counters", "counters"),
+    ("audit_log", "audit_log"),
+]
+# Columns never written to a backup: password hashes (never exportable)
+# and stored file bytes (the files themselves travel under files/).
+BACKUP_DROP_COLUMNS = {
+    "users": {"password_hash"},
+    "student_documents": {"file_data"},
+    "repository_docs": {"file_data"},
+    "vouchers": {"proof_blob"},
+}
+
+
+def _table_columns(db, table):
+    if PG:
+        return [r["column_name"] for r in db.execute(
+            """SELECT column_name FROM information_schema.columns
+               WHERE table_schema='public' AND table_name=?
+               ORDER BY ordinal_position""", (table,)).fetchall()]
+    return [r["name"] for r in db.execute(
+        f"PRAGMA table_info({table})").fetchall()]
+
+
+def _backup_cell(value):
+    if isinstance(value, (bytes, memoryview)):
+        return ""
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    return value
+
+
+def _safe_filename(name):
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name or "file")
+
+
+def _backup_files(db):
+    """(arcname, bytes) for every stored blob: student documents,
+    repository files and voucher paid proofs."""
+    out = []
+    for table, blob_col, name_col in (
+            ("student_documents", "file_data", "file_name"),
+            ("repository_docs", "file_data", "file_name"),
+            ("vouchers", "proof_blob", "proof_filename")):
+        for r in db.execute(
+                f"SELECT id, {name_col} name, {blob_col} blob FROM {table} "
+                f"WHERE {blob_col} IS NOT NULL").fetchall():
+            if r["blob"]:
+                out.append((f"{table}-{r['id']}-"
+                            f"{_safe_filename(r['name'])}",
+                            bytes(r["blob"])))
+    return out
+
+
+@app.route("/admin/backup")
+@role_required("admin")
+def admin_backup():
+    db = get_db()
+    last = db.execute(
+        "SELECT * FROM audit_log WHERE action='backup_downloaded' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    return render_template("admin_backup.html",
+                           last_backup=last, generated=_now())
+
+
+@app.route("/admin/backup/download")
+@role_required("admin")
+def admin_backup_download():
+    db = get_db()
+    import zipfile
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    sheet_names = []
+    for table, sheet in BACKUP_SHEETS:
+        cols = [c for c in _table_columns(db, table)
+                if c not in BACKUP_DROP_COLUMNS.get(table, set())]
+        if not cols:
+            continue  # table does not exist in this database
+        ws = wb.create_sheet(sheet[:31])
+        ws.append(cols)
+        order = " ORDER BY id" if "id" in cols else ""
+        for r in db.execute(
+                f"SELECT {', '.join(cols)} FROM {table}{order}").fetchall():
+            ws.append([_backup_cell(r[c]) for c in cols])
+        sheet_names.append(sheet)
+    if not sheet_names:
+        ws = wb.create_sheet("empty")
+        ws.append(["No tables found"])
+        sheet_names.append("empty")
+    xbuf = io.BytesIO()
+    wb.save(xbuf)
+    files = _backup_files(db)
+    readme = (
+        "MY CUVAS — Full Data Backup\n"
+        f"Generated: {_now()}\n\n"
+        "Contents\n"
+        "--------\n"
+        "cuvas-backup.xlsx — one sheet per database table:\n"
+        + "".join(f"  - {s}\n" for s in sheet_names)
+        + f"files/ — {len(files)} stored file(s) from the database "
+          "(student documents, repository files, voucher paid proofs), "
+          "named <table>-<id>-<original filename>.\n\n"
+        "Notes\n"
+        "-----\n"
+        "- Passwords are NEVER included: the users sheet omits the "
+        "password_hash column, so logins cannot be restored from this "
+        "backup.\n"
+        "- Document / repository tables appear as metadata only; the "
+        "file bytes themselves are under files/.\n"
+        "- Restore is manual / by a developer — the app has no "
+        "automatic restore.\n")
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("cuvas-backup.xlsx", xbuf.getvalue())
+        for arc, blob in files:
+            z.writestr(f"files/{arc}", blob)
+        z.writestr("README.txt", readme)
+    zbuf.seek(0)
+    log_audit("backup_downloaded",
+              f"Full backup downloaded: {len(sheet_names)} sheets, "
+              f"{len(files)} stored file(s)")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    return send_file(zbuf, as_attachment=True,
+                     download_name=f"cuvas-backup-{stamp}.zip",
+                     mimetype="application/zip")
 
 
 if __name__ == "__main__":

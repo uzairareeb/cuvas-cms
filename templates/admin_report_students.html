@@ -1,0 +1,36 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Student Strength Report</h2>
+<a class="btn" href="{{ url_for('admin_reports') }}">← All Reports</a>
+<a class="btn green" href="{{ url_for('admin_report_students_xlsx') }}">⬇ Download Excel</a></div>
+<p class="muted">Generated on {{ generated }}.</p>
+
+<h3>Total Students: {{ rep.total }}</h3>
+
+<div class="grid">
+<div class="card"><h3 style="margin-top:0">By Department</h3>
+<table><tr><th>Department</th><th>Students</th></tr>
+{% for r in rep.by_department %}<tr><td>{{ r.label }}</td><td>{{ r.count }}</td></tr>
+{% else %}<tr><td colspan="2">No students yet.</td></tr>{% endfor %}</table></div>
+
+<div class="card"><h3 style="margin-top:0">By Program</h3>
+<table><tr><th>Program</th><th>Students</th></tr>
+{% for r in rep.by_program %}<tr><td>{{ r.label }}</td><td>{{ r.count }}</td></tr>
+{% else %}<tr><td colspan="2">No students yet.</td></tr>{% endfor %}</table></div>
+
+<div class="card"><h3 style="margin-top:0">By Session</h3>
+<table><tr><th>Session</th><th>Students</th></tr>
+{% for r in rep.by_session %}<tr><td>{{ r.label }}</td><td>{{ r.count }}</td></tr>
+{% else %}<tr><td colspan="2">No students yet.</td></tr>{% endfor %}</table></div>
+
+<div class="card"><h3 style="margin-top:0">By Gender</h3>
+<table><tr><th>Gender</th><th>Students</th></tr>
+{% for r in rep.by_gender %}<tr><td>{{ r.label }}</td><td>{{ r.count }}</td></tr>
+{% else %}<tr><td colspan="2">No students yet.</td></tr>{% endfor %}</table></div>
+</div>
+
+<h3>Program × Session</h3>
+<table><tr><th>Program</th>{% for s in rep.sessions %}<th>{{ s.name }}</th>{% endfor %}<th>Total</th></tr>
+{% for row in rep.matrix %}<tr><td>{{ row.program }}</td>{% for c in row.cells %}<td>{{ c }}</td>{% endfor %}<td><strong>{{ row.total }}</strong></td></tr>
+{% else %}<tr><td>No programs yet.</td></tr>{% endfor %}</table>
+{% endblock %}

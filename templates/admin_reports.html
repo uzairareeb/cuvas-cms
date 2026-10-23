@@ -1,0 +1,41 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Reports &amp; Analytics</h2></div>
+<p class="muted">Generated on {{ generated }}. Every figure below comes from the same
+computations as the screens it summarises — the fee ledger behind the Account
+Statement, the shared grade derivation, and the shared attendance summary.</p>
+
+<div class="grid">
+<div class="card"><h3 style="margin-top:0">💰 Fee Collection</h3>
+<p class="muted">Challans issued, collected and outstanding for a session, a
+department breakdown and the defaulters list.</p>
+<p><a class="btn" href="{{ url_for('admin_report_fees') }}">Open Report</a></p></div>
+
+<div class="card"><h3 style="margin-top:0">🧑‍🎓 Student Strength</h3>
+<p class="muted">Total students with counts by department, program, session
+and gender, plus a program × session matrix.</p>
+<p><a class="btn" href="{{ url_for('admin_report_students') }}">Open Report</a></p></div>
+
+<div class="card"><h3 style="margin-top:0">📝 Results Summary</h3>
+<p class="muted">Per course, per session: appeared, passed, failed, pass %,
+average and highest marks, and the publish state.</p>
+<p><a class="btn" href="{{ url_for('admin_report_results') }}">Open Report</a></p></div>
+
+<div class="card"><h3 style="margin-top:0">📅 Attendance Summary</h3>
+<p class="muted">Per course assignment: classes held, students and average
+attendance % — the same shared summary the faculty and student pages show.</p>
+<p><a class="btn" href="{{ url_for('admin_report_attendance') }}">Open Report</a></p></div>
+
+<div class="card"><h3 style="margin-top:0">🧾 Audit Log</h3>
+<p class="muted">{{ audit_count }} recorded action(s). Sign-ins, sign-outs and
+every significant create / update / delete / decision across the portals.
+Append-only — nothing here can be edited or deleted.</p>
+<p><a class="btn" href="{{ url_for('admin_audit') }}">View Audit Log</a></p></div>
+
+<div class="card"><h3 style="margin-top:0">💾 Backup</h3>
+<p class="muted">Download a full ZIP backup: one Excel workbook (a sheet per
+table, passwords never included) plus every stored file.
+{% if last_backup %}Last backup downloaded: <strong>{{ last_backup }}</strong>.{% else %}No backup has been downloaded yet.{% endif %}</p>
+<p><a class="btn" href="{{ url_for('admin_backup') }}">Open Backup</a></p></div>
+</div>
+{% endblock %}

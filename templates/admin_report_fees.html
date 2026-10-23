@@ -1,0 +1,41 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Fee Collection Report</h2>
+<a class="btn" href="{{ url_for('admin_reports') }}">← All Reports</a></div>
+<p class="muted">Generated on {{ generated }}. Figures are computed from the
+append-only fee ledger for this session's challans — exactly the Account
+Statement semantics (a split challan counts through its installments).</p>
+
+<form method="get" class="toolbar">
+<label>Session
+<select name="session_id" onchange="this.form.submit()">
+{% for s in sessions %}<option value="{{ s.id }}" {% if sess and s.id == sess.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+</select></label>
+{% if sess %}<a class="btn green" href="{{ url_for('admin_report_fees_xlsx', session_id=sess.id) }}">⬇ Download Excel</a>{% endif %}
+</form>
+
+{% if not sess %}
+<p>No academic session exists yet.</p>
+{% else %}
+<h3>Summary — {{ sess.name }}</h3>
+<table>
+<tr><th>Challans Issued</th><td>{{ rep.issued_count }}</td></tr>
+<tr><th>Total Issued</th><td>Rs {{ "{:,}".format(rep.issued_rs) }}</td></tr>
+<tr><th>Total Collected</th><td>Rs {{ "{:,}".format(rep.collected_rs) }}</td></tr>
+<tr><th>Total Outstanding</th><td>Rs {{ "{:,}".format(rep.outstanding_rs) }}</td></tr>
+<tr><th>Paid Challans (sum)</th><td>Rs {{ "{:,}".format(rep.paid_rs) }}</td></tr>
+<tr><th>Proofs Waiting for Verification</th><td>{{ rep.pending_proof }}</td></tr>
+<tr><th>Cross-check — outstanding of this session's students</th><td>Rs {{ "{:,}".format(rep.cross_outstanding) }}</td></tr>
+</table>
+
+<h3>By Department</h3>
+<table><tr><th>Department</th><th>Issued (Rs)</th><th>Collected (Rs)</th><th>Outstanding (Rs)</th></tr>
+{% for d in rep.departments %}<tr><td>{{ d.department }}</td><td>{{ "{:,}".format(d.issued) }}</td><td>{{ "{:,}".format(d.collected) }}</td><td>{{ "{:,}".format(d.outstanding) }}</td></tr>
+{% else %}<tr><td colspan="4">No challans were issued in this session.</td></tr>{% endfor %}</table>
+
+<h3>Defaulters — students of this session with outstanding dues</h3>
+<table><tr><th>Name</th><th>Registration No</th><th>Department</th><th>Phone</th><th>Outstanding (Rs)</th></tr>
+{% for d in rep.defaulters %}<tr><td>{{ d.name }}</td><td>{{ d.registration_no }}</td><td>{{ d.department }}</td><td>{{ d.phone }}</td><td>{{ "{:,}".format(d.outstanding) }}</td></tr>
+{% else %}<tr><td colspan="5">No defaulters — every student of this session is clear.</td></tr>{% endfor %}</table>
+{% endif %}
+{% endblock %}

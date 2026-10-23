@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.13
+# MY CUVAS — Campus Management System (Demo) v0.14
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -34,6 +34,14 @@ admin-configured LMS / Library / Email service links shown to
 students and faculty, student societies with an admin-approved
 join flow, and vehicle entry passes with approval-stamped pass
 numbers and a printable pass PDF — see the v0.13 section below.
+**Step 19 (v0.14)** adds the Reports centre (fee collection, student
+strength, results and attendance reports — every figure from the
+same shared computations as the screens they summarise, each with
+an Excel export), an append-only **audit log** of sign-ins and
+significant actions across all portals, and a one-click **full
+backup** download (Excel workbook + stored files ZIP; passwords
+never included; restore deliberately manual) — see the v0.14
+section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -167,6 +175,24 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   Passes”, and `/student/vehicle/<id>/pass.pdf` — the printable
   pass; linked by a **Vehicle Entry** button in the Profile tab
 - `/faculty/campus` — the same three service cards for faculty
+- `/admin/reports` — the Reports hub (one sidebar link) with cards for the
+  four reports, the audit log and backup — see the v0.14 section below
+  - `/admin/reports/fees` — fee collection for a session (ledger-based
+    issued / collected / outstanding, department breakdown, defaulters)
+    and `/admin/reports/fees.xlsx`
+  - `/admin/reports/students` — student strength (totals + department /
+    program / session / gender breakdowns + program × session matrix)
+    and `/admin/reports/students.xlsx`
+  - `/admin/reports/results` — per-course results summary for a session
+    (appeared / passed / failed / pass % / average / highest / published)
+    and `/admin/reports/results.xlsx`
+  - `/admin/reports/attendance` — per-assignment attendance summary for
+    a session (classes held, students, average %) and
+    `/admin/reports/attendance.xlsx`
+  - `/admin/audit` — the append-only audit log viewer (text / role /
+    date filters, newest first, capped at 300 rows with a note)
+  - `/admin/backup` — what the backup contains + the last-backup
+    timestamp, and `/admin/backup/download` — the full ZIP backup
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -674,6 +700,91 @@ university header, “VEHICLE ENTRY PASS”, pass number, student
 name + registration number, vehicle details, valid-till and a
 Code39 barcode of the pass number.
 
+## Reports, Audit Log & Backup (Step 19, v0.14)
+
+**Reports centre** — one new sidebar link (**📊 Reports**) opens a
+hub with the four reports plus cards for the Audit Log and Backup.
+Every report page shows a “generated on” timestamp, renders clean
+empty states, and offers an **Excel export** of the same figures.
+
+- **Fee Collection** (`/admin/reports/fees`, session filter,
+  default = current session). All money figures come from the
+  **append-only ledger joined to the session's vouchers** — exactly
+  the Account Statement semantics, so a split challan counts
+  through its installments (the parent's debit is reversed, the
+  children are debited): *Total Issued*, *Total Collected*,
+  *Outstanding* (= issued − collected), the challan count (split
+  parents excluded — the live challans), the sum of `Paid`
+  challans, and the pending-proof count. A **cross-check** line
+  recomputes the outstanding as the sum of the session's own
+  students' per-session ledger balances. The **By Department**
+  table rolls the same per-student ledger figures up by the
+  student's department, and the **Defaulters** list shows the
+  session's students with outstanding > 0 (name, registration
+  number, department, phone, amount), largest dues first. The
+  export has `Summary` / `By Department` / `Defaulters` sheets.
+- **Student Strength** (`/admin/reports/students`): the total plus
+  counts **by department, by program, by session and by gender**
+  and a **program × session matrix**; the export adds one sheet
+  per breakdown plus the matrix sheet.
+- **Results Summary** (`/admin/reports/results`, session filter):
+  one row per course + semester with results in the session —
+  appeared (result rows), passed / failed (grades derived via the
+  shared `result_grade_gp`, absent counts as appeared + failed),
+  pass %, average + highest marks over the students who sat
+  (non-absent rows with marks), and the publish state (`Yes` only
+  when the whole set is Published).
+- **Attendance Summary** (`/admin/reports/attendance`, session
+  filter): one row per course assignment — classes held, cohort
+  size and average attendance %, all from the **shared
+  `attendance_summary()`** helper, so the numbers are identical
+  to the faculty summary and the student's own page.
+
+**Audit log** — a new append-only `audit_log` table (`user_id`,
+`username` + `role` snapshots, `action`, `details`, `created_at`).
+The single writer is `log_audit()`, called **after** the recorded
+action succeeds and wrapped so a logging failure can never break
+the action. Instrumented events: **login success / failure** (the
+failure records the attempted username), **logout**; student
+create / update / delete / password-reset / Excel import;
+department / program / session / course create / update / delete;
+faculty create / update / deactivate / password-reset / delete;
+fee head + fee plan create / update / delete; voucher generate
+(single + bulk, with counts) / split / verify / reject; results
+save (admin sheet, faculty marks, Excel import) / publish /
+unpublish + grading-scale changes; clearance item clear / object,
+units add / rename / activate / deactivate; scholarship scheme
+create / update / delete + application decisions; repeat rate
+change + request approve / reject; timetable slot create / update
+/ delete; transport route + stop changes; campus-life settings
+save; society create / update / delete + membership decisions;
+vehicle pass approve / reject; notification create / publish /
+unpublish / update / delete; student-document verify / reject;
+repository upload / publish / unpublish; backup download; and
+the student-side submissions (ticket created, document uploaded,
+clearance applied + recheck requested, scholarship applied,
+repeat requested / cancelled, vehicle applied, society joined,
+voucher split). The viewer (`/admin/audit`, admin only) filters
+by free text (username / action / details), role and date range,
+newest first, capped at the newest 300 rows with an explicit note
+when capped. There is no edit/delete UI or route — the table is
+only ever INSERTed into.
+
+**Backup** (`/admin/backup`, admin only) explains the contents,
+shows the last-backup timestamp (read from the audit log), and
+downloads **`cuvas-backup-<YYYYMMDD-HHMM>.zip`**: a workbook
+`cuvas-backup.xlsx` with **one sheet per core table** (only for
+tables that exist; headers-only sheets for empty tables), a
+`files/` folder with every stored blob (student documents,
+repository files, voucher paid proofs) named
+`<table>-<id>-<original filename>`, and a `README.txt`
+(generated-at time, sheet list, notes). The **users sheet omits
+`password_hash` entirely** and the document tables are exported
+as metadata only (file bytes travel under `files/`). The download
+itself is recorded in the audit log. **Restore is deliberately
+out of scope** — manual / by a developer, as the page and the
+README state.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -899,8 +1010,43 @@ keys only when absent, societies only while the table is empty),
 so a v0.12 database boots into v0.13 with its data untouched and
 a second boot is a strict no-op.
 
-## Not in v0.13
+`verify_v14.py` adds a 68-check pass for Step 19 (role guards on
+all twelve new URLs for anonymous / student / faculty clients;
+failed + successful logins audited with the attempted / actual
+username; a controlled fee fixture — three students on one
+Rs 15,000 plan: one verifies in full, one only submits a proof,
+one splits and verifies one installment — whose report figures
+equal independently computed ledger sums: issued 45,000,
+collected 22,500, outstanding 22,500 with the session cross-check
+equal, challans 4, pending proofs 1, the department row and the
+defaulters ordered B (15,000) before C (7,500) in both the page
+and the workbook; student-strength counts equal SQL GROUP BY
+counts including the program × session matrix cell; a marks
+fixture (80 / 40 / absent) whose results row reads appeared 3,
+passed 1, failed 2, 33.3%, average 60, highest 80, Published
+Yes; an attendance fixture whose report row equals the shared
+`attendance_summary()` output — 2 classes held, average 50.0%;
+the audit sequence — student create, voucher generate + verify,
+marks publish, campus settings save, a student ticket and a
+document upload, backup download, logout — recorded with the
+right actor each time, and the audit viewer's text / role / date
+filters narrowing correctly; the backup ZIP valid with the
+workbook + README, no `password_hash` in the users sheet, blobs
+under `files/`, and a `backup_downloaded` row afterwards;
+empty-session reports rendering cleanly with downloadable
+workbooks; the 10 student tabs byte-identical). v0.14 result:
+**all twelve suites ALL PASS on both backends** (SQLite and
+PostgreSQL identical: 43 + 52 + 60 + 72 + 64 + 52 + 59 + 52 +
+64 + 51 + 60 + 68 = 697 checks). Migration note: v0.14 adds ONE
+table via the boot DDL (`audit_log`, `CREATE TABLE IF NOT
+EXISTS`, no backfill), so a v0.13 database boots into v0.14 with
+its data untouched — simulated by dropping `audit_log` from a
+booted database and booting again (table recreated, demo data
+intact, new pages 200).
+
+## Not in v0.14
 
 Posting an approved scholarship award to the fee ledger / vouchers,
-surveys (deferred by the user), dept/accounts/COE portals — the
-rest of Phase 3 (see `../architecture.md`).
+surveys (deferred by the user), backup restore (deliberately
+manual), dept/accounts/COE portals — the rest of Phase 3 (see
+`../architecture.md`).

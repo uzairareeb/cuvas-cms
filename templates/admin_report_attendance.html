@@ -1,0 +1,24 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Attendance Summary Report</h2>
+<a class="btn" href="{{ url_for('admin_reports') }}">← All Reports</a></div>
+<p class="muted">Generated on {{ generated }}. Every number comes from the
+shared attendance summary — the same figures the faculty summary and the
+student's own attendance page show (percentage = Present ÷ classes held).</p>
+
+<form method="get" class="toolbar">
+<label>Session
+<select name="session_id" onchange="this.form.submit()">
+{% for s in sessions %}<option value="{{ s.id }}" {% if sess and s.id == sess.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+</select></label>
+{% if sess %}<a class="btn green" href="{{ url_for('admin_report_attendance_xlsx', session_id=sess.id) }}">⬇ Download Excel</a>{% endif %}
+</form>
+
+{% if not sess %}
+<p>No academic session exists yet.</p>
+{% else %}
+<table><tr><th>Course</th><th>Title</th><th>Teacher</th><th>Program</th><th>Semester</th><th>Classes Held</th><th>Students</th><th>Average Attendance %</th></tr>
+{% for r in rows %}<tr><td><strong>{{ r.course_code }}</strong></td><td>{{ r.course_title }}</td><td>{{ r.teacher_name }}</td><td>{{ r.prog_name }}</td><td>{{ r.semester_no }}</td><td>{{ r.classes_held }}</td><td>{{ r.students }}</td><td>{{ r.avg_pct }}%</td></tr>
+{% else %}<tr><td colspan="8">No course assignments exist in this session.</td></tr>{% endfor %}</table>
+{% endif %}
+{% endblock %}
