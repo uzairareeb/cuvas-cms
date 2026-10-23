@@ -1,0 +1,91 @@
+{% extends "preview_admin_base.html" %}
+{% block bc_body %}
+<div class="bc-pagehead">
+  <div>
+    <h1>Welcome Back, {{ session.get('display_name') }}</h1>
+    <div class="muted">Here's what's happening at CUVAS today.</div>
+  </div>
+  <div class="date">📅 {{ today }}</div>
+</div>
+
+<div class="bc-kpis">
+  <div class="bc-kpi"><div class="ic blue">🎓</div><div><div class="lb">Total Students</div><div class="vl">{{ "{:,}".format(kpi_students) }}</div></div></div>
+  <div class="bc-kpi"><div class="ic purple">👩‍🏫</div><div><div class="lb">Active Faculty</div><div class="vl">{{ "{:,}".format(kpi_faculty) }}</div></div></div>
+  <div class="bc-kpi"><div class="ic gold">🎫</div><div><div class="lb">Pending Vouchers</div><div class="vl">{{ "{:,}".format(kpi_pending_vouchers) }}</div></div></div>
+  <div class="bc-kpi"><div class="ic navy">💰</div><div><div class="lb">Total Outstanding (Rs)</div><div class="vl">{{ "{:,}".format(kpi_outstanding) }}</div></div></div>
+</div>
+
+<div class="bc-grid">
+  <div class="bc-card">
+    <h3>Students by Program</h3>
+    <div class="card-sub">Enrolled students per programme — live data</div>
+    {% if program_rows %}
+    <div class="bc-donut-wrap">
+      <svg class="bc-donut" width="190" height="190" viewBox="0 0 190 190" role="img" aria-label="Students by program donut chart">
+        <circle cx="95" cy="95" r="84" fill="none" stroke="#E9EFF6" stroke-width="26"/>
+        {% for p in program_rows %}<circle cx="95" cy="95" r="84" fill="none" stroke="{{ p.color }}" stroke-width="26" stroke-dasharray="{{ p.dash }}" stroke-dashoffset="{{ p.offset }}" transform="rotate(-90 95 95)"/>{% endfor %}
+        <text x="95" y="92" text-anchor="middle" font-size="27" font-weight="800" fill="#17365D">{{ "{:,}".format(program_total) }}</text>
+        <text x="95" y="114" text-anchor="middle" font-size="12" fill="#647A99">Students</text>
+      </svg>
+      <div class="bc-legend">
+        {% for p in program_rows %}<div class="row"><span class="dot" style="background:{{ p.color }}"></span><span class="nm">{{ p.name }}</span><span class="ct">{{ p.count }}</span><span class="pc">{{ p.pct }}%</span></div>{% endfor %}
+      </div>
+    </div>
+    {% else %}<div class="bc-empty">No students enrolled yet.</div>{% endif %}
+  </div>
+  <div class="bc-card">
+    <h3>Students by Session</h3>
+    <div class="card-sub">Enrolled students per academic session — live data</div>
+    {% if session_rows %}
+    <div class="bc-bars">
+      {% for s in session_rows %}<div class="bc-bar-row"><span class="nm">{{ s.name }}</span><span class="bc-bar-track"><span class="bc-bar-fill" style="display:block;width:{{ s.pct }}%"></span></span><span class="ct">{{ s.count }}</span></div>{% endfor %}
+    </div>
+    {% else %}<div class="bc-empty">No sessions with students yet.</div>{% endif %}
+  </div>
+</div>
+
+<div class="bc-grid-3">
+  <div class="bc-card">
+    <div class="card-head"><h3>Pending Approvals</h3><span class="pill warn">{{ pending_total }} waiting</span></div>
+    <div class="bc-pending">
+      {% for p in pending %}<a href="{{ p.url }}"><span class="n">{{ p.count }}</span><span class="t">{{ p.label }}</span><span class="go">→</span></a>{% endfor %}
+    </div>
+  </div>
+  <div class="bc-card">
+    <div class="card-head"><h3>Quick Links</h3></div>
+    <div class="bc-tiles">
+      <a class="bc-tile" href="{{ url_for('admin_students') }}"><span class="ic">🧑‍🎓</span>Students</a>
+      <a class="bc-tile" href="{{ url_for('admin_vouchers') }}"><span class="ic">🎫</span>Vouchers</a>
+      <a class="bc-tile" href="{{ url_for('admin_results') }}"><span class="ic">📝</span>Results</a>
+      <a class="bc-tile" href="{{ url_for('admin_reports') }}"><span class="ic">📊</span>Reports</a>
+      <a class="bc-tile" href="{{ url_for('admin_backup') }}"><span class="ic">💾</span>Backup</a>
+      <a class="bc-tile" href="{{ url_for('admin_campus') }}"><span class="ic">🌐</span>Campus Life</a>
+    </div>
+  </div>
+  <div class="bc-card">
+    <div class="card-head"><h3>Recent Notifications</h3><a href="{{ url_for('admin_notifications') }}">View All →</a></div>
+    <div class="bc-feed">
+      {% for n in notifications %}<div class="item"><div class="tt">{{ n.title }}</div><div class="mt">{{ (n.published_at or '')[:10] }}</div></div>
+      {% else %}<div class="bc-empty">No notifications published yet.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="bc-grid">
+  <div class="bc-card">
+    <div class="card-head"><h3>Recent Students</h3><a href="{{ url_for('admin_students') }}">View All →</a></div>
+    <div class="bc-tablewrap"><table>
+      <tr><th>Name</th><th>Reg No</th><th>Program</th><th>Session</th></tr>
+      {% for s in recent_students %}<tr><td>{{ s.name }}</td><td>{{ s.registration_no }}</td><td>{{ s.prog or '—' }}</td><td>{{ s.sess or '—' }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted">No students yet.</td></tr>{% endfor %}
+    </table></div>
+  </div>
+  <div class="bc-card">
+    <div class="card-head"><h3>Recent Activity</h3><a href="{{ url_for('admin_audit') }}">Audit Log →</a></div>
+    <div class="bc-feed">
+      {% for a in activity %}<div class="item"><div class="tt"><span class="ac">{{ a.action }}</span> — {{ a.username or 'system' }}</div><div class="mt">{{ a.created_at }}{% if a.details %} · {{ a.details }}{% endif %}</div></div>
+      {% else %}<div class="bc-empty">No activity recorded yet.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

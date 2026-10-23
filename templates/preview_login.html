@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — MY CUVAS · Bluecrest preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='bluecrest.css') }}"></head>
+<body class="bc">
+<div class="bc-login">
+  <div class="bc-login-brand">
+    <div class="bc-logo-card"><img src="{{ url_for('brand_cuvas_logo') }}" alt="CUVAS — Cholistan University of Veterinary and Animal Sciences, Bahawalpur"></div>
+    <div class="bc-gold-rule"></div>
+    <h1>Cholistan University of Veterinary and Animal Sciences, Bahawalpur</h1>
+    <p>Campus Management System — one portal for students, faculty and administration.</p>
+  </div>
+  <div class="bc-login-main">
+    <div style="width:100%;max-width:430px">
+      {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}{% for cat, m in msgs %}<div class="bc-flash {{ cat }}">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
+      <div class="bc-login-card">
+        <h2>Sign in to MY CUVAS</h2>
+        <p class="sub">Use your portal username and password.</p>
+        <form method="post" action="{{ url_for('preview_bluecrest_login') }}">
+          <label for="bc-username">Username</label>
+          <input id="bc-username" name="username" required autofocus autocomplete="username">
+          <label for="bc-password">Password</label>
+          <input id="bc-password" name="password" type="password" required autocomplete="current-password">
+          <button class="bc-btn block" type="submit">Sign In</button>
+        </form>
+        <div class="bc-demo-note"><strong>Demo accounts:</strong><br>
+          Admin — <code>admin / Admin@123</code> · Student — <code>student / Student@123</code><br>
+          Faculty — <code>faculty / Faculty@123</code> · Accounts Office — <code>accounts / Accounts@123</code><br>
+          Controller of Examinations — <code>coe / Coe@123</code> (demo-only, fictional).</div>
+        <p class="bc-preview-note"><span class="pill gold">Preview</span> Design preview — Bluecrest sample. The live portal theme is unchanged.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>
