@@ -1,0 +1,38 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<p><a href="{{ url_for('admin_clearance') }}">← Back to Clearance Requests</a></p>
+<div class="toolbar"><h2>Clearance Units</h2></div>
+<p class="muted">Units appear on <strong>new</strong> applications in the order below. Deactivating a unit
+removes it from future applications only — requests already submitted keep their
+snapshot items. Units are never deleted, so clearance history stays intact.
+Renaming a unit likewise affects future applications only.</p>
+
+<div class="card">
+<h3>Add a unit</h3>
+<form method="post" class="toolbar">
+<input type="text" name="name" placeholder="Unit name, e.g. Alumni Office" required>
+<button class="btn green" type="submit">Add Unit</button>
+</form>
+</div>
+
+<div class="card" style="margin-top:16px">
+<table>
+<tr><th>#</th><th>Unit</th><th>Type</th><th>Status</th><th>Rename</th><th></th></tr>
+{% for u in units %}
+<tr>
+<td>{{ u.sort_order }}</td>
+<td>{{ u.name }}</td>
+<td>{% if u.is_accounts %}<span class="pill submitted">Accounts — auto-checked</span>{% else %}Manual{% endif %}</td>
+<td><span class="pill {{ 'paid' if u.is_active else 'pending' }}">{{ 'Active' if u.is_active else 'Inactive' }}</span></td>
+<td><form method="post" action="{{ url_for('admin_clearance_unit_rename', unit_id=u.id) }}">
+<input type="text" name="name" value="{{ u.name }}" required>
+<button class="btn small" type="submit">Rename</button>
+</form></td>
+<td><form method="post" action="{{ url_for('admin_clearance_unit_toggle', unit_id=u.id) }}">
+<button class="btn small" type="submit">{{ 'Deactivate' if u.is_active else 'Activate' }}</button>
+</form></td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}

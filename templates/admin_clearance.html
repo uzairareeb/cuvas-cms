@@ -1,0 +1,31 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Clearance Requests</h2>
+<a class="btn" href="{{ url_for('admin_clearance_units') }}">⚙ Manage Units</a></div>
+<p class="muted">In Progress: <strong>{{ counts['In Progress'] }}</strong> · Cleared: <strong>{{ counts['Cleared'] }}</strong></p>
+<form method="get" class="toolbar">
+<select name="status">
+<option value="" {% if not status %}selected{% endif %}>All statuses</option>
+<option value="In Progress" {% if status=='In Progress' %}selected{% endif %}>In Progress</option>
+<option value="Cleared" {% if status=='Cleared' %}selected{% endif %}>Cleared</option>
+</select>
+<input type="text" name="q" value="{{ q }}" placeholder="Search name / registration no">
+<button class="btn" type="submit">Search</button>
+</form>
+<table>
+<tr><th>Student</th><th>Registration No</th><th>Program</th><th>Applied</th><th>Progress</th><th>Status</th><th></th></tr>
+{% for r in rows %}
+<tr>
+<td>{{ r.student_name }}</td>
+<td>{{ r.registration_no }}</td>
+<td>{{ r.prog_name or '—' }}</td>
+<td>{{ r.created_at[:10] if r.created_at else '—' }}</td>
+<td>{{ r.cleared_count }} of {{ r.total_count }} cleared</td>
+<td><span class="pill {{ 'paid' if r.status=='Cleared' else 'submitted' }}">{{ r.status }}</span></td>
+<td><a class="btn small" href="{{ url_for('admin_clearance_detail', request_id=r.id) }}">Review</a></td>
+</tr>
+{% else %}
+<tr><td colspan="7" class="muted">No clearance requests match.</td></tr>
+{% endfor %}
+</table>
+{% endblock %}

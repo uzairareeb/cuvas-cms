@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+<div class="toolbar"><h2>My Clearance</h2></div>
+<p class="muted">{{ student.name }} · {{ student.registration_no }} · {{ student.prog_name }} · {{ student.dept_name }}</p>
+
+{% if not req %}
+<div class="card">
+<h3>Apply for Degree Clearance</h3>
+<p>Before your degree and final documents can be issued, every university unit
+must clear you. When you apply, one clearance item is created per unit:</p>
+<p>{% for u in units %}<span class="pill submitted">{{ u.name }}</span> {% endfor %}</p>
+<p class="muted">The <strong>Accounts / Fees</strong> item is checked automatically against your
+Account Statement: if you have outstanding dues it will be objected with the
+amount shown; with a zero balance it is cleared by the system right away.
+Every other unit reviews your application manually — if a unit raises an
+objection, fix the issue and use <em>Request Recheck</em> on that item.</p>
+<form method="post" action="{{ url_for('student_clearance_apply') }}">
+<button class="btn green" type="submit">Apply for Clearance</button>
+</form>
+</div>
+{% else %}
+<div class="card">
+<h3>Clearance Application #{{ req.id }} — <span class="pill {{ 'paid' if req.status=='Cleared' else 'submitted' }}">{{ req.status }}</span></h3>
+<p class="muted">Applied on {{ req.created_at[:10] if req.created_at else '—' }}{% if req.completed_at %} · Completed on {{ req.completed_at[:10] }}{% endif %} · Progress: <strong>{{ cleared_count }} of {{ items|length }} cleared</strong></p>
+{% if req.status == 'Cleared' %}
+<p>🎉 <strong>All units have cleared you.</strong> Your clearance certificate is ready:</p>
+<p><a class="btn green" href="{{ url_for('student_clearance_certificate') }}">⬇ Download Clearance Certificate (PDF)</a></p>
+{% endif %}
+<table>
+<tr><th>Unit</th><th>Status</th><th>Remarks</th><th>Action By</th><th>Date</th><th></th></tr>
+{% for it in items %}
+<tr>
+<td>{{ it.unit_name }}{% if it.recheck_requested %}<br><span class="pill submitted">Recheck requested</span>{% endif %}</td>
+<td><span class="pill {{ 'paid' if it.status=='Cleared' else 'rejected' if it.status=='Objected' else 'pending' }}">{{ it.status }}</span></td>
+<td>{{ it.remarks or '—' }}{% if it.auto_note %}<br><span class="muted">🤖 {{ it.auto_note }}</span>{% endif %}</td>
+<td>{{ it.action_by or '—' }}</td>
+<td>{{ it.action_at[:10] if it.action_at else '—' }}</td>
+<td>{% if it.status == 'Objected' %}<form method="post" action="{{ url_for('student_clearance_recheck', item_id=it.id) }}"><button class="btn small" type="submit">Request Recheck</button></form>{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+</div>
+{% endblock %}

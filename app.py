@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.8
+MY CUVAS — Campus Management System (Demo) v0.9
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -35,6 +35,14 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      P/A/L/Leave counts + percentage = present / classes held, and feeds
      the faculty summary (+ Excel), the read-only admin overview and the
      student's own /student/attendance page (own rows only).
+ 13. v0.9 clearance — a student applies for degree clearance; one item is
+     created per active clearance unit (clearance_units, admin-managed).
+     The Accounts / Fees item is AUTO-EVALUATED at apply time from the
+     student's ledger balance (dues -> Objected with a system note, zero
+     -> Cleared by 'System'); admins clear or object each item (an
+     objection needs a remark), the student can request a recheck of an
+     objected item, and once every item is Cleared the request completes
+     and a clearance certificate PDF becomes downloadable.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -260,6 +268,23 @@ DDL = [
         marked_by_faculty_id INTEGER,
         created_at TEXT, updated_at TEXT,
         UNIQUE(assignment_id, student_id, class_date))""",
+    # --- v0.9 clearance (new tables only; plain INTEGER ids like
+    # enrollments/results/attendance — no REFERENCES, so older migration
+    # simulations stay safe on PG; unit_name is a snapshot on each item
+    # so later unit renames/deactivations never rewrite history) ---
+    f"""CREATE TABLE IF NOT EXISTS clearance_units (
+        id {_PK}, name TEXT NOT NULL, sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1, is_accounts INTEGER DEFAULT 0)""",
+    f"""CREATE TABLE IF NOT EXISTS clearance_requests (
+        id {_PK}, student_id INTEGER,
+        status TEXT DEFAULT 'In Progress',
+        created_at TEXT, completed_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS clearance_items (
+        id {_PK}, request_id INTEGER, unit_id INTEGER, unit_name TEXT,
+        status TEXT DEFAULT 'Pending', remarks TEXT, auto_note TEXT,
+        action_by TEXT, action_at TEXT,
+        recheck_requested INTEGER DEFAULT 0, created_at TEXT,
+        UNIQUE(request_id, unit_id))""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -317,6 +342,7 @@ def init_db():
     backfill_v04(db)
     backfill_v06(db)
     backfill_v07(db)
+    backfill_v09(db)
     db.commit()
     db.conn.close()
 
@@ -508,6 +534,27 @@ def backfill_v07(db):
                 """INSERT INTO course_assignments (faculty_id,course_id,session_id,
                    created_at) VALUES (?,?,?,?)""",
                 (fid, c["id"], demo["session_id"], _now()))
+
+
+# ------------------------------------------------------- v0.9 clearance seed
+DEFAULT_CLEARANCE_UNITS = [
+    ("Accounts / Fees", 1), ("Library", 0), ("Hostel", 0),
+    ("Examinations (COE)", 0), ("Department", 0), ("Sports", 0),
+    ("Transport", 0),
+]
+
+
+def backfill_v09(db):
+    """Idempotent v0.9 migration: seed the clearance units (in order,
+    'Accounts / Fees' first and flagged is_accounts=1 so the apply flow
+    can auto-evaluate it) ONLY while the units table is empty. A strict
+    no-op afterwards, so admin renames/deactivations are never undone."""
+    if db.execute("SELECT COUNT(*) c FROM clearance_units").fetchone()["c"]:
+        return
+    for i, (name, is_accounts) in enumerate(DEFAULT_CLEARANCE_UNITS, start=1):
+        db.insert(
+            "INSERT INTO clearance_units (name,sort_order,is_active,is_accounts) "
+            "VALUES (?,?,1,?)", (name, i, is_accounts))
 
 
 def _today():
@@ -4368,6 +4415,466 @@ def admin_attendance_detail(assignment_id):
     classes_held, rows = _attendance_summary_rows(db, a)
     return render_template("admin_attendance_detail.html", a=a, rows=rows,
                            classes_held=classes_held)
+
+
+# ================================================================ v0.9 CLEARANCE
+# Degree clearance: the student applies once; the system creates one item
+# per ACTIVE clearance unit. The Accounts / Fees item is auto-evaluated at
+# apply time from the SAME ledger computation behind the Account Statement
+# (total debit - total credit): dues -> Objected with a system note, zero
+# -> Cleared by 'System'. Admins then clear or object each item (an admin
+# may also override the auto-evaluated Accounts item); an objection needs
+# a remark, and the student may ask for a recheck, which returns the item
+# to Pending flagged for the admin. When every item is Cleared the
+# request completes and the certificate PDF unlocks.
+
+def student_outstanding(db, student_id):
+    """Outstanding dues from the append-only ledger — exactly the Account
+    Statement computation (sum of debits minus sum of credits)."""
+    row = db.execute(
+        """SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c
+           FROM ledger_entries WHERE student_id=?""", (student_id,)).fetchone()
+    return (row["d"] or 0) - (row["c"] or 0)
+
+
+def _active_clearance_units(db):
+    return db.execute(
+        "SELECT * FROM clearance_units WHERE COALESCE(is_active,1)=1 "
+        "ORDER BY sort_order, id").fetchall()
+
+
+def _accounts_unit(db):
+    return db.execute(
+        "SELECT * FROM clearance_units WHERE COALESCE(is_accounts,0)=1 "
+        "ORDER BY sort_order, id LIMIT 1").fetchone()
+
+
+def _clearance_items(db, request_id):
+    return db.execute(
+        "SELECT * FROM clearance_items WHERE request_id=? ORDER BY id",
+        (request_id,)).fetchall()
+
+
+def _sync_clearance_status(db, request_id):
+    """Keep the stored request status in step with its items: all Cleared
+    -> 'Cleared' + completed_at; anything else -> 'In Progress'."""
+    items = _clearance_items(db, request_id)
+    req = db.execute("SELECT * FROM clearance_requests WHERE id=?",
+                     (request_id,)).fetchone()
+    if not req:
+        return
+    if items and all(i["status"] == "Cleared" for i in items):
+        db.execute(
+            "UPDATE clearance_requests SET status='Cleared', completed_at=? "
+            "WHERE id=?",
+            (req.get("completed_at") or _now(), request_id))
+    else:
+        db.execute(
+            "UPDATE clearance_requests SET status='In Progress', "
+            "completed_at=NULL WHERE id=?", (request_id,))
+
+
+def _clearance_progress(db, request_id):
+    items = _clearance_items(db, request_id)
+    cleared = sum(1 for i in items if i["status"] == "Cleared")
+    return cleared, len(items)
+
+
+def _own_clearance_item_or_none(db, item_id):
+    item = db.execute("SELECT * FROM clearance_items WHERE id=?",
+                      (item_id,)).fetchone()
+    if not item:
+        return None
+    req = db.execute("SELECT * FROM clearance_requests WHERE id=?",
+                     (item["request_id"],)).fetchone()
+    if not req or req["student_id"] != session.get("student_id"):
+        return None
+    return item
+
+
+def _clearance_request_full(db, request_id):
+    return db.execute(
+        """SELECT r.*, s.name student_name, s.registration_no, s.cnic,
+                  p.name prog_name, d.name dept_name
+           FROM clearance_requests r
+           JOIN students s ON s.id=r.student_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN departments d ON d.id=s.department_id
+           WHERE r.id=?""", (request_id,)).fetchone()
+
+
+# ------------------------------------------------------------ student side
+@app.route("/student/clearance")
+@role_required("student")
+def student_clearance():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        flash("No student record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    req = db.execute(
+        "SELECT * FROM clearance_requests WHERE student_id=? "
+        "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
+    items, cleared_count = [], 0
+    if req:
+        items = _clearance_items(db, req["id"])
+        cleared_count = sum(1 for i in items if i["status"] == "Cleared")
+    return render_template(
+        "student_clearance.html", student=student, req=req, items=items,
+        cleared_count=cleared_count,
+        units=_active_clearance_units(db) if not req else [])
+
+
+@app.route("/student/clearance/apply", methods=["POST"])
+@role_required("student")
+def student_clearance_apply():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        abort(404)
+    existing = db.execute(
+        "SELECT * FROM clearance_requests WHERE student_id=? "
+        "ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
+    if existing and existing["status"] == "In Progress":
+        flash("Your clearance application is already in progress.", "error")
+        return redirect(url_for("student_clearance"))
+    if existing and existing["status"] == "Cleared":
+        flash("You are already cleared — a new application is not needed.",
+              "error")
+        return redirect(url_for("student_clearance"))
+    units = _active_clearance_units(db)
+    if not units:
+        flash("Clearance is not open yet — no units are configured.", "error")
+        return redirect(url_for("student_clearance"))
+    accounts = _accounts_unit(db)
+    balance = student_outstanding(db, sid)
+    now = _now()
+    req_id = db.insert(
+        "INSERT INTO clearance_requests (student_id,status,created_at,completed_at) "
+        "VALUES (?,?,?,NULL)", (sid, "In Progress", now))
+    for unit in units:
+        status, auto_note, action_by, action_at = "Pending", None, None, None
+        if accounts and unit["id"] == accounts["id"]:
+            action_by, action_at = "System", now
+            if balance > 0:
+                status = "Objected"
+                auto_note = (f"System check: outstanding dues of "
+                             f"Rs {balance:,}.")
+            else:
+                status = "Cleared"
+                auto_note = "System check: no outstanding dues."
+        db.insert(
+            """INSERT INTO clearance_items (request_id,unit_id,unit_name,status,
+               remarks,auto_note,action_by,action_at,recheck_requested,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (req_id, unit["id"], unit["name"], status, None, auto_note,
+             action_by, action_at, 0, now))
+    _sync_clearance_status(db, req_id)
+    db.commit()
+    flash("Clearance application submitted. Each unit will now review it.",
+          "ok")
+    return redirect(url_for("student_clearance"))
+
+
+@app.route("/student/clearance/items/<int:item_id>/recheck", methods=["POST"])
+@role_required("student")
+def student_clearance_recheck(item_id):
+    db = get_db()
+    item = _own_clearance_item_or_none(db, item_id)
+    if not item:
+        abort(404)
+    if item["status"] != "Objected":
+        flash("Only an objected item can be sent for a recheck.", "error")
+        return redirect(url_for("student_clearance"))
+    # back to Pending, flagged for the admin; the objection remark stays
+    # on the item as history
+    db.execute(
+        "UPDATE clearance_items SET status='Pending', recheck_requested=1 "
+        "WHERE id=?", (item_id,))
+    _sync_clearance_status(db, item["request_id"])
+    db.commit()
+    flash(f"Recheck requested for {item['unit_name']}.", "ok")
+    return redirect(url_for("student_clearance"))
+
+
+# ------------------------------------------------------------ certificate PDF
+def build_clearance_certificate_pdf(db, request_id):
+    """Clearance certificate PDF bytes — same green style as the other
+    PDFs. Caller guarantees the request exists and is Cleared."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    req = _clearance_request_full(db, request_id)
+    student = student_full(db, req["student_id"])
+    items = _clearance_items(db, request_id)
+    year = (req.get("completed_at") or req.get("created_at") or _today())[:4]
+    cert_no = f"CLR-{year}-{req['id']}"
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm,
+                            bottomMargin=14 * mm, leftMargin=14 * mm,
+                            rightMargin=14 * mm,
+                            title=f"Clearance Certificate {cert_no}")
+    story = _pdf_header(styles, "CLEARANCE CERTIFICATE")
+    green = colors.HexColor("#0b6b3a")
+    grid = colors.HexColor("#b9d2c2")
+    light = colors.HexColor("#eaf5ee")
+    story.append(Paragraph(f"Certificate No: <b>{cert_no}</b>",
+                           styles["BodyText"]))
+    story.append(Spacer(1, 3 * mm))
+    info = [["Student Name", student["name"],
+             "Registration No.", student["registration_no"]],
+            ["CNIC", student.get("cnic") or "—",
+             "Program", student["prog_name"] or "—"],
+            ["Department", student["dept_name"] or "—",
+             "Session",
+             student["sess_name"] or student.get("session_name") or "—"]]
+    t = Table(info, colWidths=[30 * mm, 58 * mm, 30 * mm, 64 * mm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                           ("BACKGROUND", (0, 0), (0, -1), light),
+                           ("BACKGROUND", (2, 0), (2, -1), light),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [t, Spacer(1, 5 * mm)]
+    story.append(Paragraph(
+        "This is to certify that the above-named student has been cleared "
+        "by all units of the university listed below.",
+        styles["BodyText"]))
+    story.append(Spacer(1, 3 * mm))
+    rows = [["Unit", "Status", "Cleared On", "Cleared By"]]
+    for it in items:
+        rows.append([it["unit_name"], "Cleared",
+                     (it.get("action_at") or "")[:10] or "—",
+                     it.get("action_by") or "—"])
+    lt = Table(rows, colWidths=[64 * mm, 30 * mm, 30 * mm, 58 * mm])
+    lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                            ("BACKGROUND", (0, 0), (-1, 0), green),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [lt, Spacer(1, 8 * mm)]
+    story.append(Paragraph("<b><font color=\"#0b6b3a\" size=\"16\">CLEARED"
+                           "</font></b>", styles["BodyText"]))
+    story += [Spacer(1, 6 * mm),
+              Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — "
+                        f"system-generated certificate, no signature "
+                        f"required. All data shown is fictional demo data.",
+                        styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/clearance/certificate.pdf")
+@role_required("student")
+def student_clearance_certificate():
+    db = get_db()
+    sid = session.get("student_id")
+    req = db.execute(
+        "SELECT * FROM clearance_requests WHERE student_id=? "
+        "ORDER BY id DESC LIMIT 1", (sid,)).fetchone() if sid else None
+    if not req or req["status"] != "Cleared":
+        flash("The clearance certificate is available once every unit has "
+              "cleared you.", "error")
+        return redirect(url_for("student_clearance"))
+    student = student_full(db, sid)
+    return send_file(
+        io.BytesIO(build_clearance_certificate_pdf(db, req["id"])),
+        as_attachment=True,
+        download_name=f"clearance-certificate-{student['registration_no']}.pdf",
+        mimetype="application/pdf")
+
+
+# ------------------------------------------------------------ admin desk
+@app.route("/admin/clearance")
+@role_required("admin")
+def admin_clearance():
+    db = get_db()
+    status = request.args.get("status", "")
+    q = request.args.get("q", "").strip()
+    sql = ("SELECT r.id FROM clearance_requests r "
+           "JOIN students s ON s.id=r.student_id WHERE 1=1")
+    params = []
+    if status in ("In Progress", "Cleared"):
+        sql += " AND r.status=?"
+        params.append(status)
+    if q:
+        sql += f" AND (s.name {LIKE} ? OR s.registration_no {LIKE} ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY r.id DESC"
+    rows = []
+    for r in db.execute(sql, params).fetchall():
+        full = dict(_clearance_request_full(db, r["id"]))
+        full["cleared_count"], full["total_count"] = _clearance_progress(
+            db, r["id"])
+        rows.append(full)
+    counts = {s: db.execute(
+        "SELECT COUNT(*) c FROM clearance_requests WHERE status=?",
+        (s,)).fetchone()["c"] for s in ("In Progress", "Cleared")}
+    return render_template("admin_clearance.html", rows=rows, counts=counts,
+                           status=status, q=q)
+
+
+@app.route("/admin/clearance/<int:request_id>")
+@role_required("admin")
+def admin_clearance_detail(request_id):
+    db = get_db()
+    req = _clearance_request_full(db, request_id)
+    if not req:
+        abort(404)
+    items = _clearance_items(db, request_id)
+    cleared_count = sum(1 for i in items if i["status"] == "Cleared")
+    return render_template(
+        "admin_clearance_detail.html", req=req, items=items,
+        cleared_count=cleared_count,
+        outstanding=student_outstanding(db, req["student_id"]))
+
+
+@app.route("/admin/clearance/items/<int:item_id>/clear", methods=["POST"])
+@role_required("admin")
+def admin_clearance_item_clear(item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM clearance_items WHERE id=?",
+                      (item_id,)).fetchone()
+    if not item:
+        abort(404)
+    remark = request.form.get("remark", "").strip()
+    if remark:
+        db.execute(
+            "UPDATE clearance_items SET status='Cleared', remarks=?, "
+            "action_by=?, action_at=?, recheck_requested=0 WHERE id=?",
+            (remark, session.get("display_name"), _now(), item_id))
+    else:
+        db.execute(
+            "UPDATE clearance_items SET status='Cleared', action_by=?, "
+            "action_at=?, recheck_requested=0 WHERE id=?",
+            (session.get("display_name"), _now(), item_id))
+    _sync_clearance_status(db, item["request_id"])
+    db.commit()
+    flash(f"{item['unit_name']} cleared.", "ok")
+    return redirect(url_for("admin_clearance_detail",
+                            request_id=item["request_id"]))
+
+
+@app.route("/admin/clearance/items/<int:item_id>/object", methods=["POST"])
+@role_required("admin")
+def admin_clearance_item_object(item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM clearance_items WHERE id=?",
+                      (item_id,)).fetchone()
+    if not item:
+        abort(404)
+    remark = request.form.get("remark", "").strip()
+    if not remark:
+        flash("A remark is required when raising an objection — the "
+              "student needs to know what to fix.", "error")
+        return redirect(url_for("admin_clearance_detail",
+                                request_id=item["request_id"]))
+    db.execute(
+        "UPDATE clearance_items SET status='Objected', remarks=?, "
+        "action_by=?, action_at=?, recheck_requested=0 WHERE id=?",
+        (remark, session.get("display_name"), _now(), item_id))
+    _sync_clearance_status(db, item["request_id"])
+    db.commit()
+    flash(f"Objection recorded for {item['unit_name']}.", "ok")
+    return redirect(url_for("admin_clearance_detail",
+                            request_id=item["request_id"]))
+
+
+@app.route("/admin/clearance/<int:request_id>/certificate.pdf")
+@role_required("admin")
+def admin_clearance_certificate(request_id):
+    db = get_db()
+    req = _clearance_request_full(db, request_id)
+    if not req:
+        abort(404)
+    if req["status"] != "Cleared":
+        flash("The certificate is available only once this request is "
+              "fully cleared.", "error")
+        return redirect(url_for("admin_clearance_detail",
+                                request_id=request_id))
+    return send_file(
+        io.BytesIO(build_clearance_certificate_pdf(db, request_id)),
+        as_attachment=True,
+        download_name=f"clearance-certificate-{req['registration_no']}.pdf",
+        mimetype="application/pdf")
+
+
+# ------------------------------------------------------------ admin: units
+@app.route("/admin/clearance/units", methods=["GET", "POST"])
+@role_required("admin")
+def admin_clearance_units():
+    db = get_db()
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("Unit name is required.", "error")
+        elif db.execute(
+                f"SELECT id FROM clearance_units WHERE name {LIKE} ?",
+                (name,)).fetchone():
+            flash(f"A clearance unit named '{name}' already exists.",
+                  "error")
+        else:
+            top = db.execute(
+                "SELECT COALESCE(MAX(sort_order),0) m FROM clearance_units"
+            ).fetchone()["m"]
+            db.insert(
+                "INSERT INTO clearance_units (name,sort_order,is_active,"
+                "is_accounts) VALUES (?,?,1,0)", (name, top + 1))
+            db.commit()
+            flash(f"Clearance unit '{name}' added.", "ok")
+        return redirect(url_for("admin_clearance_units"))
+    units = db.execute(
+        "SELECT * FROM clearance_units ORDER BY sort_order, id").fetchall()
+    return render_template("admin_clearance_units.html", units=units)
+
+
+@app.route("/admin/clearance/units/<int:unit_id>/rename", methods=["POST"])
+@role_required("admin")
+def admin_clearance_unit_rename(unit_id):
+    db = get_db()
+    unit = db.execute("SELECT * FROM clearance_units WHERE id=?",
+                      (unit_id,)).fetchone()
+    if not unit:
+        abort(404)
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Unit name is required.", "error")
+    elif db.execute(
+            f"SELECT id FROM clearance_units WHERE name {LIKE} ? AND id<>?",
+            (name, unit_id)).fetchone():
+        flash(f"Another clearance unit is already named '{name}'.", "error")
+    else:
+        # renames affect FUTURE applications only — existing items keep
+        # their snapshot unit_name
+        db.execute("UPDATE clearance_units SET name=? WHERE id=?",
+                   (name, unit_id))
+        db.commit()
+        flash(f"Unit renamed to '{name}'.", "ok")
+    return redirect(url_for("admin_clearance_units"))
+
+
+@app.route("/admin/clearance/units/<int:unit_id>/toggle", methods=["POST"])
+@role_required("admin")
+def admin_clearance_unit_toggle(unit_id):
+    db = get_db()
+    unit = db.execute("SELECT * FROM clearance_units WHERE id=?",
+                      (unit_id,)).fetchone()
+    if not unit:
+        abort(404)
+    new_state = 0 if unit.get("is_active", 1) else 1
+    db.execute("UPDATE clearance_units SET is_active=? WHERE id=?",
+               (new_state, unit_id))
+    db.commit()
+    flash(f"Unit '{unit['name']}' "
+          f"{'activated' if new_state else 'deactivated'}.", "ok")
+    return redirect(url_for("admin_clearance_units"))
 
 
 # ------------------------------------------------------------ student card

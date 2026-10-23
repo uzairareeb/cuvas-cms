@@ -1,0 +1,45 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<p><a href="{{ url_for('admin_clearance') }}">← Back to Clearance Requests</a></p>
+<div class="toolbar"><h2>Clearance #{{ req.id }} — {{ req.student_name }}</h2>
+<span class="pill {{ 'paid' if req.status=='Cleared' else 'submitted' }}">{{ req.status }}</span></div>
+<div class="card">
+<table>
+<tr><th>Registration No</th><td>{{ req.registration_no }}</td><th>CNIC</th><td>{{ req.cnic or '—' }}</td></tr>
+<tr><th>Program</th><td>{{ req.prog_name or '—' }}</td><th>Department</th><td>{{ req.dept_name or '—' }}</td></tr>
+<tr><th>Applied</th><td>{{ req.created_at[:10] if req.created_at else '—' }}</td><th>Completed</th><td>{{ req.completed_at[:10] if req.completed_at else '—' }}</td></tr>
+<tr><th>Progress</th><td>{{ cleared_count }} of {{ items|length }} cleared</td><th>Outstanding dues (ledger)</th><td>Rs {{ "{:,}".format(outstanding) }}</td></tr>
+</table>
+{% if req.status == 'Cleared' %}
+<p><a class="btn green" href="{{ url_for('admin_clearance_certificate', request_id=req.id) }}">⬇ Clearance Certificate (PDF)</a></p>
+{% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3>Units</h3>
+<table>
+<tr><th>Unit</th><th>Status</th><th>Remarks / System Note</th><th>Action By</th><th>Date</th><th>Actions</th></tr>
+{% for it in items %}
+<tr>
+<td>{{ it.unit_name }}{% if it.recheck_requested %}<br><span class="pill submitted">Recheck requested</span>{% endif %}</td>
+<td><span class="pill {{ 'paid' if it.status=='Cleared' else 'rejected' if it.status=='Objected' else 'pending' }}">{{ it.status }}</span></td>
+<td>{{ it.remarks or '—' }}{% if it.auto_note %}<br><span class="muted">🤖 {{ it.auto_note }}</span>{% endif %}</td>
+<td>{{ it.action_by or '—' }}</td>
+<td>{{ it.action_at[:10] if it.action_at else '—' }}</td>
+<td>
+<form method="post" action="{{ url_for('admin_clearance_item_clear', item_id=it.id) }}" style="margin-bottom:6px">
+<input type="text" name="remark" placeholder="Remark (optional)">
+<button class="btn small green" type="submit">Clear</button>
+</form>
+<form method="post" action="{{ url_for('admin_clearance_item_object', item_id=it.id) }}">
+<input type="text" name="remark" placeholder="Objection remark (required)">
+<button class="btn small danger" type="submit">Object</button>
+</form>
+</td>
+</tr>
+{% endfor %}
+</table>
+<p class="muted">An auto-evaluated Accounts item keeps its system note even when you override it — the
+note records what the ledger check found when the student applied.</p>
+</div>
+{% endblock %}

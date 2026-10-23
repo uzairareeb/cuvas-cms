@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.8
+# MY CUVAS — Campus Management System (Demo) v0.9
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -13,7 +13,10 @@ pack — document verification, support tickets, notifications admin, the
 document repository and the student card PDF — see the v0.6 section below.
 **Step 11 (v0.7)** adds the faculty portal — faculty records with
 auto-created logins, course assignments and a teacher portal for rosters
-and marks entry — see the v0.7 section below.
+and marks entry — see the v0.7 section below. **Step 12 (v0.8)** adds
+attendance, and **Step 13 (v0.9)** adds degree clearance with an
+auto-evaluated Accounts check and a certificate PDF — see the v0.9
+section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -89,6 +92,14 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   (`/admin/attendance/<assignment_id>` = the teacher's summary, read-only)
 - `/student/attendance` — the student's own per-course attendance (counts,
   %, date-wise detail); linked from the Course Enrollments tab
+- `/student/clearance` — the student's degree-clearance checklist (apply,
+  per-unit status / remarks / system notes, recheck requests, certificate
+  download once fully cleared); linked by a **My Clearance** button in
+  the Profile tab — see the Clearance section below
+- `/admin/clearance` — the admin clearance desk (requests with progress,
+  status filter + search; per-item Clear / Object; certificate PDF) and
+  `/admin/clearance/units` — manage the clearance units (add / rename /
+  activate / deactivate)
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -279,6 +290,62 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   same summary table the teacher sees, rendered from the same partial,
   with no mark/edit/delete controls.
 
+## Clearance (Step 13, v0.9)
+
+- **Model** (three new tables, plain INTEGER ids like
+  `enrollments`/`results`/`attendance`): `clearance_units` (name,
+  sort_order, is_active, is_accounts), `clearance_requests` (student,
+  stored status `In Progress` / `Cleared` kept in sync with its items,
+  created_at, completed_at) and `clearance_items` (request + unit,
+  `unit_name` **snapshot**, status Pending / Cleared / Objected, admin
+  remarks, `auto_note` system-check text, action_by / action_at,
+  recheck flag; unique per request + unit).
+- **Units seed** (`backfill_v09`, only while the units table is empty):
+  Accounts / Fees (flagged `is_accounts`), Library, Hostel,
+  Examinations (COE), Department, Sports, Transport. **Admin →
+  Clearance → Manage Units** (`/admin/clearance/units`) can add, rename
+  and activate/deactivate units; units are never deleted, and renames /
+  deactivations shape **new applications only** — existing requests
+  keep their snapshot items.
+- **Apply flow** (`/student/clearance`, **My Clearance** button in the
+  Profile tab — the dashboard's 10 tabs and labels are unchanged): with
+  no request, an explanation + Apply button. Applying creates the
+  request plus one item per **active** unit. The Accounts item is
+  **auto-evaluated** from the student's ledger balance
+  (`student_outstanding` — the same total-debit − total-credit
+  computation as the Account Statement): dues → **Objected** with
+  `System check: outstanding dues of Rs <amount>.`; zero → **Cleared**
+  with `System check: no outstanding dues.`, stamped as action_by
+  `System`. All other units start Pending. A second apply while one is
+  In Progress (or already Cleared) is blocked with a friendly flash.
+- **Student checklist**: per unit — status pill, admin remarks, the
+  system note shown distinctly (🤖), who acted and when, and progress
+  “X of Y cleared”. An Objected item offers **Request Recheck**: the
+  item returns to Pending flagged `recheck_requested` (the objection
+  remark stays as history); the admin desk shows a “Recheck requested”
+  badge, and acting on the item clears the flag.
+- **Admin desk** (`/admin/clearance`, sidebar link): requests list
+  (student, reg no, program, applied date, X-of-Y progress, status;
+  filter by status + search by name / reg no). The detail page
+  (`/admin/clearance/<id>`) shows the student summary — including the
+  live ledger outstanding figure — and per item a **Clear** action
+  (optional remark) and an **Object** action (**remark required** —
+  the student must know what to fix). Any item, including the
+  auto-evaluated Accounts item, can be overridden by the admin; the
+  override stamps the admin's name and the `auto_note` stays visible.
+  After every action the request status is re-synced: all items
+  Cleared → `Cleared` + `completed_at`, otherwise `In Progress`.
+- **Certificate PDF** (`build_clearance_certificate_pdf`, the usual
+  green PDF style): CUVAS header, “CLEARANCE CERTIFICATE”, certificate
+  no `CLR-<year>-<request_id>`, the student's name / reg no / CNIC /
+  program / department / session, a table of units with status and
+  clearance dates, a bold **CLEARED** line and a system-generated note.
+  Routes: `/student/clearance/certificate.pdf` (own latest request
+  only) and `/admin/clearance/<id>/certificate.pdf` — both refuse with
+  a flash + redirect until the request is fully Cleared. Students only
+  ever see their own request: a recheck POST against another student's
+  item returns 404.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -350,9 +417,31 @@ backends** (SQLite and PostgreSQL identical: 43 + 52 + 60 + 72 + 64 +
 a foreign key to it — the `attendance` table therefore uses plain
 INTEGER ids (exactly like `enrollments`/`results`) instead of
 `REFERENCES`, keeping every older migration simulation green.
+`verify_v09.py` adds a 59-check pass over Step 13 (units seeded in
+order with Accounts flagged; the demo student — Rs 47,500 outstanding
+per the real ledger — applies and gets Accounts auto-Objected with the
+amount in the system note while a zero-balance fixture student is
+auto-Cleared by 'System'; duplicate apply blocked; objection without a
+remark refused, with a remark shown to the student; recheck returns the
+item to Pending + flagged on the admin desk with the remark preserved;
+clearing item by item syncs progress on both sides; the admin override
+of the auto-Objected Accounts item keeps its system note; the request
+flips to Cleared + completed_at only at 7 of 7; the certificate is
+blocked before completion and returns real %PDF bytes after, for both
+the student and the admin; cross-student recheck on a foreign item is a
+404 and no clearance data leaks into another student's page; unit
+add/rename/deactivate shapes a new application — deactivated Sports
+excluded, the added unit included — while the existing request keeps
+its snapshot items; clearance never writes to the ledger; the demo
+transcript stays at CGPA 3.63). v0.9 result: **all seven suites ALL
+PASS on both backends** (SQLite and PostgreSQL identical: 43 + 52 + 60
++ 72 + 64 + 52 + 59). A v0.8-era migration was also simulated (the
+three clearance tables dropped from a booted database): the next boot
+recreates them, re-seeds the 7 units, keeps all demo data, and a
+further boot is a strict no-op.
 
-## Not in v0.8
+## Not in v0.9
 
-Clearance, scholarships application flow, course repeat, timetable,
-surveys, dept/accounts/COE portals — the rest of Phase 2 (see
+Scholarships application flow, course repeat, timetable, surveys,
+dept/accounts/COE portals — the rest of Phase 2 (see
 `../architecture.md`).
