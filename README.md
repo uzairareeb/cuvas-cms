@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.7
+# MY CUVAS — Campus Management System (Demo) v0.8
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -82,7 +82,13 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
     blocks login), reset password (shown once), and manage **course assignments**
   - Delete is blocked while the member holds course assignments
 - `/faculty` — the faculty portal (role `faculty` only): profile card + own
-  courses grouped by session, class roster + Excel export, marks entry
+  courses grouped by session, class roster + Excel export, marks entry,
+  and per-course **attendance** (mark/edit/delete per-date sheets, summary
+  + Excel — see the Attendance section below)
+- `/admin/attendance` — read-only attendance overview for all assignments
+  (`/admin/attendance/<assignment_id>` = the teacher's summary, read-only)
+- `/student/attendance` — the student's own per-course attendance (counts,
+  %, date-wise detail); linked from the Course Enrollments tab
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -226,6 +232,53 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   so the roster shows the seeded class. It never touches results — the
   demo transcript (CGPA 3.63) is unchanged.
 
+## Attendance (Step 12, v0.8)
+
+- **Model** (`attendance` table — the only new table; plain INTEGER ids
+  like `enrollments`/`results`): one row per student per class date per
+  course assignment (`UNIQUE(assignment_id, student_id, class_date)`),
+  status **Present / Absent / Late / Leave**, the marking teacher and
+  created/updated timestamps. Created idempotently by the boot DDL — no
+  backfill is needed, and a v0.7-era database simply gains the table.
+- **Faculty flow** (from each course card on `/faculty`, or
+  `/faculty/course/<assignment_id>/attendance`): the landing lists every
+  marked date with its P/A/L/Leave counts, an **Edit** link and a
+  **Delete** action (the app's confirm-form pattern), plus a date picker
+  (defaults to today) into the mark sheet
+  (`.../attendance/mark?date=YYYY-MM-DD`). The sheet is the
+  `sheet_students` roster with a status select per student — **Present**
+  pre-selected for unmarked students, saved values pre-selected on
+  re-open. Saving **upserts** per student, so re-saving a date corrects
+  it in place and can never duplicate a row. **Future dates are
+  rejected** with a friendly flash and zero writes; malformed dates just
+  bounce back to the landing. Every route resolves through the same
+  assignment-ownership check as the rest of the portal, so another
+  teacher's assignment is a **404** on landing, mark (GET + POST),
+  summary, Excel export and delete alike.
+- **One shared computation** — `attendance_summary(assignment_id)` is the
+  single source for all three audiences: **classes held** = the number
+  of distinct class dates recorded for the assignment; per student it
+  returns the P/A/L/Leave counts, the total marked, and
+  **percentage = round(present / classes_held × 100, 1)**. Late and Leave
+  do **not** count as present; the raw counts are always displayed next
+  to the percentage so the definition stays transparent.
+- **Faculty summary** (`.../attendance/summary`): the per-student table
+  (Reg No, Name, P, A, L, Leave, Total, %) with classes held, plus an
+  **Excel export** of the same table (`.../attendance/summary.xlsx`).
+- **Student page** (`/student/attendance`, linked by a **My Attendance**
+  button in the Course Enrollments tab — the dashboard's 10 tabs and
+  their labels are unchanged): for each enrolled course, the teacher
+  (resolved through the course+session's single assignment), classes
+  held, the student's **own** counts and %, and a date-wise detail list
+  (date + status pill). A course with no assignment or no marks yet
+  shows “No attendance recorded yet”. Students only ever see their own
+  rows.
+- **Admin overview** (`/admin/attendance`, sidebar link): a read-only
+  list of all assignments (teacher, course, program, session, classes
+  held, students) linking to `/admin/attendance/<assignment_id>` — the
+  same summary table the teacher sees, rendered from the same partial,
+  with no mark/edit/delete controls.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -280,9 +333,26 @@ transcript intact, and a v0.6-era migration simulation: strip the new
 tables/column + faculty logins, boot, assert clean re-seed and a no-op
 second boot). v0.7 result: **all five suites ALL PASS on both backends**
 (SQLite: 43 + 52 + 60 + 72 + 64; PostgreSQL identical).
+`verify_v08.py` adds a 52-check pass over Step 12 (mark a date → rows
+saved with the chosen statuses + marking teacher stamped; re-save
+updates in place with classes_held unchanged; a second date →
+hand-computed percentages, 1 present of 2 = 50.0; the same numbers
+asserted on the faculty summary, the admin overview/detail and both
+students' own pages, with each student's (date, status) pair set exactly
+his own; future dates rejected with zero writes on GET and POST;
+delete-a-date → summaries recompute on all three surfaces; cross-faculty
+404s on landing/mark/summary/Excel/delete; the never-marked empty
+state; the summary Excel shape; role guards both ways; the demo
+accounts untouched). v0.8 result: **all six suites ALL PASS on both
+backends** (SQLite and PostgreSQL identical: 43 + 52 + 60 + 72 + 64 +
+52). One build note: `verify_v07`'s Postgres migration simulation drops
+`course_assignments`, which PostgreSQL refuses while another table holds
+a foreign key to it — the `attendance` table therefore uses plain
+INTEGER ids (exactly like `enrollments`/`results`) instead of
+`REFERENCES`, keeping every older migration simulation green.
 
-## Not in v0.7
+## Not in v0.8
 
-Attendance, clearance, scholarships application flow, course repeat,
-timetable, surveys, dept/accounts/COE portals — the rest of Phase 2 (see
+Clearance, scholarships application flow, course repeat, timetable,
+surveys, dept/accounts/COE portals — the rest of Phase 2 (see
 `../architecture.md`).

@@ -1,0 +1,8 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Attendance Overview</h2></div>
+<p class="muted">Read-only. Attendance is marked by each course's teacher in the Faculty Portal; this page shows every assignment and its summary.</p>
+<table><tr><th>Teacher</th><th>Course</th><th>Program</th><th>Session</th><th>Classes Held</th><th>Students</th><th></th></tr>
+{% for a in rows %}<tr><td>{{ a.teacher_name }}</td><td><strong>{{ a.course_code }}</strong> — {{ a.course_title }}</td><td>{{ a.prog_name or '—' }}</td><td>{{ a.sess_name or '—' }}</td><td>{{ a.classes_held }}</td><td>{{ a.student_count }}</td>
+<td><a class="btn small ghost" href="{{ url_for('admin_attendance_detail', assignment_id=a.id) }}">View Summary</a></td></tr>
+{% else %}<tr><td colspan="7">No course assignments exist yet. Assign courses to teachers from Faculty → Edit / Assign Courses.</td></tr>{% endfor %}</table>
+{% endblock %}

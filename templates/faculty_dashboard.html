@@ -16,7 +16,8 @@
 <p style="margin:6px 0">🧑‍🎓 {{ a.student_count }} student(s) enrolled</p>
 <p style="margin:6px 0">Results: <span class="pill {{ 'paid' if a.result_state=='Published' else 'pending' if a.result_state=='Unpublished' else 'submitted' if a.result_state=='Partially published' else 'split' }}">{{ a.result_state }}</span></p>
 <p style="margin:10px 0 0"><a class="btn small ghost" href="{{ url_for('faculty_course_students', assignment_id=a.id) }}">Students</a>
-<a class="btn small green" href="{{ url_for('faculty_course_marks', assignment_id=a.id) }}">Enter Marks</a></p>
+<a class="btn small green" href="{{ url_for('faculty_course_marks', assignment_id=a.id) }}">Enter Marks</a>
+<a class="btn small ghost" href="{{ url_for('faculty_attendance', assignment_id=a.id) }}">Attendance</a></p>
 </div>{% endfor %}
 </div>
 {% else %}<p class="muted">No courses are assigned to you yet. The admin assigns courses from Faculty → Edit / Assign Courses.</p>{% endfor %}

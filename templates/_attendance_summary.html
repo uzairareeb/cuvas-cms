@@ -1,0 +1,4 @@
+<p class="muted">Classes held: <strong>{{ classes_held }}</strong> · Percentage = Present ÷ Classes Held × 100 (Late and Leave do not count as Present — see the counts).</p>
+<table><tr><th>Reg No</th><th>Name</th><th>Present</th><th>Absent</th><th>Late</th><th>Leave</th><th>Total Marked</th><th>Attendance %</th></tr>
+{% for r in rows %}{% set s = r.student %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ r.present }}</td><td>{{ r.absent }}</td><td>{{ r.late }}</td><td>{{ r.leave }}</td><td>{{ r.total }}</td><td><strong>{{ r.pct }}%</strong></td></tr>
+{% else %}<tr><td colspan="8">No students are enrolled for this course in this session yet.</td></tr>{% endfor %}</table>

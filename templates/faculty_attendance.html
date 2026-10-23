@@ -1,0 +1,23 @@
+{% extends "faculty_base.html" %}
+{% block faculty_body %}<div class="toolbar"><h2>Attendance — {{ a.course_code }}</h2>
+<div><a class="btn ghost" href="{{ url_for('faculty_dashboard') }}">← My Courses</a>
+<a class="btn ghost" href="{{ url_for('faculty_course_students', assignment_id=a.id) }}">Class List</a>
+<a class="btn ghost" href="{{ url_for('faculty_attendance_summary', assignment_id=a.id) }}">📊 Summary</a></div></div>
+<p class="muted">{{ a.course_title }} · {{ a.prog_name or '' }} · {{ a.sess_name or '' }} · Semester {{ a.semester_no }}</p>
+
+<div class="form-card wide" style="margin-bottom:18px">
+<form method="get" action="{{ url_for('faculty_attendance_mark', assignment_id=a.id) }}">
+<label>Class date</label>
+<input type="date" name="date" value="{{ today }}" max="{{ today }}" required>
+<div class="form-actions"><button class="btn green" type="submit">📝 Mark Attendance</button></div>
+</form>
+<p class="muted">Pick a date and mark the class. Re-opening an already-marked date lets you correct it — saving updates the same sheet, it never duplicates. Future dates are not accepted.</p>
+</div>
+
+<h3>Marked Dates</h3>
+<table><tr><th>Date</th><th>Present</th><th>Absent</th><th>Late</th><th>Leave</th><th>Total Marked</th><th></th></tr>
+{% for d in dates %}<tr><td>{{ d.class_date }}</td><td>{{ d.p }}</td><td>{{ d.ab }}</td><td>{{ d.lt }}</td><td>{{ d.lv }}</td><td>{{ d.total }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('faculty_attendance_mark', assignment_id=a.id, date=d.class_date) }}">Edit</a>
+<form method="post" action="{{ url_for('faculty_attendance_delete', assignment_id=a.id) }}" onsubmit="return confirm('Delete the attendance marked for {{ d.class_date }}? This cannot be undone.');"><input type="hidden" name="date" value="{{ d.class_date }}"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No attendance has been marked for this course yet.</td></tr>{% endfor %}</table>
+{% endblock %}

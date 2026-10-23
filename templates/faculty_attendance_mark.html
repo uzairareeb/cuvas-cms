@@ -1,0 +1,16 @@
+{% extends "faculty_base.html" %}
+{% block faculty_body %}<div class="toolbar"><h2>Mark Attendance — {{ a.course_code }}</h2>
+<div><a class="btn ghost" href="{{ url_for('faculty_attendance', assignment_id=a.id) }}">← Attendance Dates</a></div></div>
+<p class="muted">{{ a.course_title }} · {{ a.prog_name or '' }} · {{ a.sess_name or '' }} · Semester {{ a.semester_no }}<br>
+Class date: <strong>{{ class_date }}</strong>{% if marks %} · This date was already marked — the saved statuses are pre-selected; saving corrects them in place.{% endif %}</p>
+
+<form method="post" action="{{ url_for('faculty_attendance_mark', assignment_id=a.id, date=class_date) }}">
+<input type="hidden" name="date" value="{{ class_date }}">
+<table><tr><th>Reg. No</th><th>Student</th><th>Status</th></tr>
+{% for s in students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td>
+<td><select name="status_{{ s.id }}">{% for st in statuses %}<option value="{{ st }}" {{ 'selected' if marks.get(s.id, 'Present') == st else '' }}>{{ st }}</option>{% endfor %}</select></td></tr>
+{% else %}<tr><td colspan="3">No students are enrolled for this course in this session yet.</td></tr>{% endfor %}
+</table>
+{% if students %}<div class="form-actions"><button class="btn green" type="submit">💾 Save Attendance</button></div>{% endif %}
+</form>
+{% endblock %}

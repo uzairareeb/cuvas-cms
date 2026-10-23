@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.7
+MY CUVAS — Campus Management System (Demo) v0.8
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -28,6 +28,13 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      marks sheet that writes into the same results store as the admin
      sheet. Faculty can never publish; once the admin publishes a set,
      the faculty sheet locks read-only.
+ 12. v0.8 attendance — faculty mark a per-date sheet (Present / Absent /
+     Late / Leave) for their own assignments only (upsert per student+date,
+     future dates rejected, a marked date can be deleted); ONE shared
+     helper (attendance_summary) computes classes held + per-student
+     P/A/L/Leave counts + percentage = present / classes held, and feeds
+     the faculty summary (+ Excel), the read-only admin overview and the
+     student's own /student/attendance page (own rows only).
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -244,6 +251,15 @@ DDL = [
         course_id INTEGER REFERENCES courses(id),
         session_id INTEGER REFERENCES academic_sessions(id),
         created_at TEXT, UNIQUE(faculty_id, course_id, session_id))""",
+    # --- v0.8 attendance (new table only; class_date is ISO text; plain
+    # INTEGER ids like enrollments/results — no REFERENCES, so older
+    # migration simulations that drop course_assignments still work on PG)
+    f"""CREATE TABLE IF NOT EXISTS attendance (
+        id {_PK}, assignment_id INTEGER, student_id INTEGER,
+        class_date TEXT NOT NULL, status TEXT NOT NULL,
+        marked_by_faculty_id INTEGER,
+        created_at TEXT, updated_at TEXT,
+        UNIQUE(assignment_id, student_id, class_date))""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -4044,6 +4060,314 @@ def faculty_course_marks(assignment_id):
         rows.append({"student": s, "result": res, "grade": grade, "gp": gp})
     return render_template("faculty_marks.html", a=a, rows=rows,
                            state=state, locked=locked)
+
+
+# ================================================================ v0.8 ATTENDANCE
+# Faculty mark one sheet per class date for THEIR OWN assignments (every
+# route resolves through _own_assignment_or_none, so another teacher's
+# assignment is a 404 on GET and POST alike). Saving upserts per
+# (assignment, student, date) — re-saving a date edits it in place and can
+# never duplicate a row. Future dates are rejected with no writes.
+# attendance_summary() below is the ONE computation behind the faculty
+# summary, the read-only admin overview and the student's own page:
+#   classes_held = distinct class_dates recorded for the assignment
+#   percentage   = round(present / classes_held * 100, 1)
+# Late / Leave do NOT count as present; the P/A/L/Leave counts are always
+# displayed next to the percentage so the definition stays transparent.
+
+ATTENDANCE_STATUSES = ["Present", "Absent", "Late", "Leave"]
+
+
+def attendance_summary(db, assignment_id):
+    """-> {'classes_held': int, 'dates': [iso-date, ...],
+          'by_student': {student_id: {present, absent, late, leave,
+                                      total, pct}}}"""
+    dates = [r["class_date"] for r in db.execute(
+        """SELECT DISTINCT class_date FROM attendance
+           WHERE assignment_id=? ORDER BY class_date""",
+        (assignment_id,)).fetchall()]
+    classes_held = len(dates)
+    by_student = {}
+    for r in db.execute(
+            """SELECT student_id, status, COUNT(*) n FROM attendance
+               WHERE assignment_id=? GROUP BY student_id, status""",
+            (assignment_id,)).fetchall():
+        d = by_student.setdefault(
+            r["student_id"], {"present": 0, "absent": 0, "late": 0,
+                              "leave": 0, "total": 0, "pct": 0.0})
+        key = (r["status"] or "").lower()
+        if key in ("present", "absent", "late", "leave"):
+            d[key] += r["n"]
+        d["total"] += r["n"]
+    for d in by_student.values():
+        d["pct"] = (round(d["present"] / classes_held * 100, 1)
+                    if classes_held else 0.0)
+    return {"classes_held": classes_held, "dates": dates,
+            "by_student": by_student}
+
+
+def _attendance_summary_rows(db, a):
+    """(classes_held, rows) for an assignment row `a` (with program_id):
+    the sheet_students cohort, in roster order, joined with the shared
+    summary counts — students never marked yet count zeroes."""
+    summ = attendance_summary(db, a["id"])
+    rows = []
+    for s in sheet_students(db, a["program_id"], a["session_id"],
+                            a["course_id"], a["semester_no"]):
+        d = summ["by_student"].get(
+            s["id"], {"present": 0, "absent": 0, "late": 0, "leave": 0,
+                      "total": 0, "pct": 0.0})
+        rows.append({"student": s, **d})
+    return summ["classes_held"], rows
+
+
+def _marked_dates(db, assignment_id):
+    """Marked dates for one assignment, newest first, with status counts."""
+    return db.execute(
+        """SELECT class_date,
+                  SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END) p,
+                  SUM(CASE WHEN status='Absent' THEN 1 ELSE 0 END) ab,
+                  SUM(CASE WHEN status='Late' THEN 1 ELSE 0 END) lt,
+                  SUM(CASE WHEN status='Leave' THEN 1 ELSE 0 END) lv,
+                  COUNT(*) total
+           FROM attendance WHERE assignment_id=?
+           GROUP BY class_date ORDER BY class_date DESC""",
+        (assignment_id,)).fetchall()
+
+
+def _clean_class_date(raw):
+    """-> the ISO date string when `raw` is exactly YYYY-MM-DD, else None."""
+    raw = (raw or "").strip()
+    try:
+        parsed = datetime.date.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw if parsed.isoformat() == raw else None
+
+
+@app.route("/faculty/course/<int:assignment_id>/attendance")
+@role_required("faculty")
+def faculty_attendance(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    return render_template("faculty_attendance.html", a=a,
+                           dates=_marked_dates(db, assignment_id),
+                           today=_today())
+
+
+@app.route("/faculty/course/<int:assignment_id>/attendance/mark",
+           methods=["GET", "POST"])
+@role_required("faculty")
+def faculty_attendance_mark(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    class_date = _clean_class_date(request.values.get("date"))
+    if class_date is None:
+        flash("Pick a valid class date (YYYY-MM-DD) to mark attendance.",
+              "error")
+        return redirect(url_for("faculty_attendance",
+                                assignment_id=assignment_id))
+    if class_date > _today():
+        flash(f"Attendance for {class_date} cannot be marked — that date "
+              f"is in the future.", "error")
+        return redirect(url_for("faculty_attendance",
+                                assignment_id=assignment_id))
+    students = sheet_students(db, a["program_id"], a["session_id"],
+                              a["course_id"], a["semester_no"])
+    if request.method == "POST":
+        now, fid = _now(), session.get("faculty_id")
+        saved = 0
+        for s in students:
+            status = request.form.get(f"status_{s['id']}", "Present")
+            if status not in ATTENDANCE_STATUSES:
+                status = "Present"
+            existing = db.execute(
+                """SELECT id FROM attendance WHERE assignment_id=?
+                   AND student_id=? AND class_date=?""",
+                (assignment_id, s["id"], class_date)).fetchone()
+            if existing:
+                db.execute(
+                    """UPDATE attendance SET status=?,
+                       marked_by_faculty_id=?, updated_at=? WHERE id=?""",
+                    (status, fid, now, existing["id"]))
+            else:
+                db.insert(
+                    """INSERT INTO attendance (assignment_id, student_id,
+                       class_date, status, marked_by_faculty_id,
+                       created_at, updated_at) VALUES (?,?,?,?,?,?,?)""",
+                    (assignment_id, s["id"], class_date, status, fid,
+                     now, now))
+            saved += 1
+        db.commit()
+        flash(f"Attendance for {class_date} saved — {saved} student(s) "
+              f"recorded.", "ok")
+        return redirect(url_for("faculty_attendance",
+                                assignment_id=assignment_id))
+    marks = {r["student_id"]: r["status"] for r in db.execute(
+        "SELECT student_id, status FROM attendance "
+        "WHERE assignment_id=? AND class_date=?",
+        (assignment_id, class_date)).fetchall()}
+    return render_template("faculty_attendance_mark.html", a=a,
+                           students=students, class_date=class_date,
+                           marks=marks, statuses=ATTENDANCE_STATUSES)
+
+
+@app.route("/faculty/course/<int:assignment_id>/attendance/delete",
+           methods=["POST"])
+@role_required("faculty")
+def faculty_attendance_delete(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    class_date = _clean_class_date(request.form.get("date"))
+    if class_date is None:
+        flash("No valid date was given — nothing was deleted.", "error")
+        return redirect(url_for("faculty_attendance",
+                                assignment_id=assignment_id))
+    db.execute(
+        "DELETE FROM attendance WHERE assignment_id=? AND class_date=?",
+        (assignment_id, class_date))
+    db.commit()
+    flash(f"Attendance for {class_date} deleted — that class no longer "
+          f"counts in the summaries.", "ok")
+    return redirect(url_for("faculty_attendance",
+                            assignment_id=assignment_id))
+
+
+@app.route("/faculty/course/<int:assignment_id>/attendance/summary")
+@role_required("faculty")
+def faculty_attendance_summary(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    classes_held, rows = _attendance_summary_rows(db, a)
+    return render_template("faculty_attendance_summary.html", a=a,
+                           rows=rows, classes_held=classes_held)
+
+
+@app.route("/faculty/course/<int:assignment_id>/attendance/summary.xlsx")
+@role_required("faculty")
+def faculty_attendance_summary_xlsx(assignment_id):
+    db = get_db()
+    a = _own_assignment_or_none(db, assignment_id)
+    if not a:
+        abort(404)
+    classes_held, rows = _attendance_summary_rows(db, a)
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Attendance Summary"
+    ws.append([f"{a['course_code']} — {a['course_title']}"])
+    ws.append([f"Classes held: {classes_held}"])
+    ws.append(["Reg No", "Name", "Present", "Absent", "Late", "Leave",
+               "Total", "Attendance %"])
+    for r in rows:
+        s = r["student"]
+        ws.append([s["registration_no"], s["name"], r["present"],
+                   r["absent"], r["late"], r["leave"], r["total"], r["pct"]])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(
+        buf, as_attachment=True,
+        download_name=f"attendance-{a['course_code']}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ------------------------------------------------------- student attendance
+@app.route("/student/attendance")
+@role_required("student")
+def student_attendance():
+    db = get_db()
+    sid = session.get("student_id")
+    student = db.execute("SELECT * FROM students WHERE id=?",
+                         (sid,)).fetchone()
+    if not student:
+        flash("No student record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    enrollments = db.execute(
+        """SELECT e.*, c.code, c.title FROM enrollments e
+           JOIN courses c ON c.id=e.course_id
+           WHERE e.student_id=? ORDER BY c.code""", (sid,)).fetchall()
+    courses = []
+    for e in enrollments:
+        sess = db.execute(
+            "SELECT id FROM academic_sessions WHERE name=?",
+            (e["session_name"],)).fetchone() if e["session_name"] else None
+        # a course+session has at most one primary teacher, so at most one
+        # assignment can hold this student's attendance for the course
+        assignment = db.execute(
+            """SELECT a.id, f.full_name teacher_name FROM course_assignments a
+               JOIN faculty f ON f.id=a.faculty_id
+               WHERE a.course_id=? AND a.session_id=?""",
+            (e["course_id"], sess["id"])).fetchone() if sess else None
+        entry = {"enrollment": e,
+                 "teacher": assignment["teacher_name"] if assignment else None,
+                 "classes_held": 0, "counts": None, "detail": []}
+        if assignment:
+            summ = attendance_summary(db, assignment["id"])
+            entry["classes_held"] = summ["classes_held"]
+            entry["counts"] = summ["by_student"].get(sid)
+            entry["detail"] = db.execute(
+                """SELECT class_date, status FROM attendance
+                   WHERE assignment_id=? AND student_id=?
+                   ORDER BY class_date""",
+                (assignment["id"], sid)).fetchall()
+        courses.append(entry)
+    return render_template("student_attendance.html", student=student,
+                           courses=courses)
+
+
+# ------------------------------------------------------------ admin overview
+def _assignment_full(db, assignment_id):
+    """One assignment with course/program/session/teacher context (admin)."""
+    return db.execute(
+        """SELECT a.*, c.code course_code, c.title course_title,
+                  c.semester_no, c.program_id, p.name prog_name,
+                  ss.name sess_name, f.full_name teacher_name
+           FROM course_assignments a
+           JOIN courses c ON c.id=a.course_id
+           LEFT JOIN programs p ON p.id=c.program_id
+           LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+           JOIN faculty f ON f.id=a.faculty_id WHERE a.id=?""",
+        (assignment_id,)).fetchone()
+
+
+@app.route("/admin/attendance")
+@role_required("admin")
+def admin_attendance():
+    db = get_db()
+    rows = []
+    for r in db.execute(
+            """SELECT a.id FROM course_assignments a
+               JOIN courses c ON c.id=a.course_id
+               LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+               ORDER BY ss.name, c.code""").fetchall():
+        a = dict(_assignment_full(db, r["id"]))
+        a["classes_held"] = attendance_summary(db, a["id"])["classes_held"]
+        a["student_count"] = len(sheet_students(
+            db, a["program_id"], a["session_id"], a["course_id"],
+            a["semester_no"]))
+        rows.append(a)
+    return render_template("admin_attendance.html", rows=rows)
+
+
+@app.route("/admin/attendance/<int:assignment_id>")
+@role_required("admin")
+def admin_attendance_detail(assignment_id):
+    db = get_db()
+    a = _assignment_full(db, assignment_id)
+    if not a:
+        abort(404)
+    classes_held, rows = _attendance_summary_rows(db, a)
+    return render_template("admin_attendance_detail.html", a=a, rows=rows,
+                           classes_held=classes_held)
 
 
 # ------------------------------------------------------------ student card

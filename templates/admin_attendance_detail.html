@@ -1,0 +1,6 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<div class="toolbar"><h2>Attendance — {{ a.course_code }}</h2>
+<div><a class="btn ghost" href="{{ url_for('admin_attendance') }}">← All Assignments</a></div></div>
+<p class="muted">{{ a.course_title }} · Teacher: <strong>{{ a.teacher_name }}</strong> · {{ a.prog_name or '' }} · {{ a.sess_name or '' }} · Semester {{ a.semester_no }} · Read-only — the teacher manages this sheet from the Faculty Portal.</p>
+{% include "_attendance_summary.html" %}
+{% endblock %}

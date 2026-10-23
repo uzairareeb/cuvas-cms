@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='enrollments') }}">← Back to Course Enrollments</a></p>
+<div class="toolbar"><h2>My Attendance</h2></div>
+<p class="muted">{{ student.name }} · {{ student.registration_no }} · Percentage = Present ÷ Classes Held × 100 (Late and Leave do not count as Present).</p>
+
+{% for c in courses %}{% set e = c.enrollment %}
+<div class="card" style="margin-bottom:16px">
+<h3 style="margin-top:0">{{ e.code }} — {{ e.title }}</h3>
+<p class="muted" style="margin:2px 0">Session: {{ e.session_name or '—' }} · Teacher: {{ c.teacher or 'Not assigned yet' }} · Classes held: <strong>{{ c.classes_held }}</strong></p>
+{% if c.counts %}
+<p style="margin:8px 0">Present: <strong>{{ c.counts.present }}</strong> · Absent: <strong>{{ c.counts.absent }}</strong> · Late: <strong>{{ c.counts.late }}</strong> · Leave: <strong>{{ c.counts.leave }}</strong> · Attendance: <strong>{{ c.counts.pct }}%</strong></p>
+<table><tr><th>Date</th><th>Status</th></tr>
+{% for d in c.detail %}<tr><td>{{ d.class_date }}</td><td><span class="pill {{ 'paid' if d.status=='Present' else 'pending' if d.status=='Absent' else 'submitted' if d.status=='Late' else 'split' }}">{{ d.status }}</span></td></tr>{% endfor %}
+</table>
+{% else %}
+<p style="margin:8px 0">No attendance recorded yet for this course.</p>
+{% endif %}
+</div>
+{% else %}
+<p class="muted">You have no course enrollments yet.</p>
+{% endfor %}
+</div>
+{% endblock %}
