@@ -1,6 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
+{% extends "student_base.html" %}
+{% block student_body %}
 <h2>Student Dashboard — {{ student.name }}</h2>
 <p class="muted">{{ student.registration_no }} · {{ student.prog }} · {{ student.dept }} · Semester {{ student.current_semester }} · {{ student.session_name }}</p>
 
@@ -20,7 +19,7 @@
 <section class="tab-pane" id="pane-news"><div class="grid">
 {% for n in news %}<div class="card"><h3>{{ n.title }}</h3><p>{{ n.body }}</p><p class="muted">{{ n.published_at }}</p></div>{% endfor %}
 </div>
-<div class="card" style="margin-top:16px"><h3>Document Repository — Official Circulars &amp; Notifications</h3>
+<div class="card" style="margin-top:16px" id="repository"><h3>Document Repository — Official Circulars &amp; Notifications</h3>
 {% if repo_docs %}<table><tr><th>Title</th><th>Category</th><th>Description</th><th>File</th><th>Published</th><th></th></tr>
 {% for d in repo_docs %}<tr><td>{{ d.title }}</td><td>{{ d.category }}</td><td>{{ d.description or '—' }}</td><td>{{ d.file_name }}</td><td>{{ d.created_at[:10] if d.created_at else '—' }}</td>
 <td><a class="btn small green" href="{{ url_for('student_repository_download', doc_id=d.id) }}">⬇ Download</a></td></tr>{% endfor %}</table>
@@ -29,11 +28,6 @@
 
 <section class="tab-pane" id="pane-profile"><div class="card">
 <h3>Personal &amp; Academic Profile</h3>
-<p><a class="btn green" href="{{ url_for('student_card_pdf') }}">⬇ Download Student Card (PDF)</a></p>
-<p><a class="btn" href="{{ url_for('student_clearance') }}">✅ My Clearance</a></p>
-<p><a class="btn" href="{{ url_for('student_transport') }}">🚌 Transport</a></p>
-<p><a class="btn" href="{{ url_for('student_campus') }}">🌐 Campus Life</a></p>
-<p><a class="btn" href="{{ url_for('student_vehicle') }}">🚗 Vehicle Entry</a></p>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
 <tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>
@@ -52,8 +46,6 @@
 </div></section>
 
 <section class="tab-pane" id="pane-enrollments"><div class="card"><h3>Course Enrollments — Semester {{ student.current_semester }}</h3>
-<p><a class="btn green" href="{{ url_for('student_attendance') }}">📅 My Attendance</a></p>
-<p><a class="btn" href="{{ url_for('student_timetable') }}">🗓 View Time Table</a></p>
 <table><tr><th>SR</th><th>Semester Session</th><th>Course Code</th><th>Course</th><th>Faculty</th><th>Credit Hours (Theory-Lab)</th></tr>
 {% for e in enrollments %}<tr><td>{{ loop.index }}</td><td>{{ e.session_name }}</td><td>{{ e.code }}</td><td>{{ e.title }}</td><td>{{ e.faculty_name }}</td><td>{{ e.credit_theory }}-{{ e.credit_lab }}</td></tr>{% endfor %}</table></div></section>
 
@@ -67,8 +59,7 @@
 <section class="tab-pane" id="pane-transcript"><div class="card"><h3>Transcript</h3>
 <p>Overall CGPA: <strong>{{ cgpa }}</strong></p>
 <p><a class="btn green" href="{{ url_for('student_transcript_pdf') }}">⬇ Download Transcript (PDF)</a>
-<a class="btn ghost" href="{{ url_for('student_slip_pdf') }}">⬇ Roll Number Slip (PDF)</a>
-<a class="btn" href="{{ url_for('student_repeat') }}">🔁 Course Repeat / Improvement</a></p>
+<a class="btn ghost" href="{{ url_for('student_slip_pdf') }}">⬇ Roll Number Slip (PDF)</a></p>
 {% for sem, block in transcript.items() %}<h4>Semester {{ sem }} — SGPA: {{ block.sgpa }} · CGPA: {{ block.cgpa }}</h4>
 <table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Marks</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
 {% for r in block.rows %}<tr><td>{{ r.code }}</td><td>{{ r.title }}{% if r.superseded %} <span class="pill split">Repeated</span>{% endif %}</td><td>{{ r.credits }}</td><td>{{ r.marks_display }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}{% if r.superseded %}<br><span class="muted">Superseded by a later attempt — not counted in SGPA/CGPA</span>{% endif %}</td></tr>{% endfor %}</table>{% endfor %}
@@ -140,7 +131,6 @@
 <td><a class="btn small ghost" href="{{ url_for('student_ticket_thread', ticket_id=t.id) }}">Open Thread</a></td></tr>
 {% else %}<tr><td colspan="6">No tickets yet.</td></tr>{% endfor %}</table>
 </div></section>
-</div>
 <script>
 var active = {{ active_tab|tojson }};
 var valid = ['news','profile','enrollments','plan','transcript','voucher','feeplan','statement','documents','tickets'];
@@ -150,5 +140,7 @@ function show(t){ if(valid.indexOf(t)<0) t='news';
  document.getElementById('pane-'+t).classList.add('active'); }
 document.querySelectorAll('.tab-btn').forEach(function(b){ b.addEventListener('click', function(){ show(b.dataset.tab); }); });
 show(active);
+var _h = (location.hash || '').replace('#', '').replace('pane-', '');
+if (valid.indexOf(_h) >= 0 && _h !== active) show(_h);
 </script>
 {% endblock %}

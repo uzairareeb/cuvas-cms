@@ -1,11 +1,9 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='feeplan') }}">← Back to Fee Plan &amp; Scholarships</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>Scholarships</h2></div>
 <p class="muted">{{ student.name }} · {{ student.registration_no }} · {{ student.prog_name }} · {{ student.dept_name }}</p>
 
-<div class="card">
+<div class="card" id="profile">
 <h3>1 · My Socio-Economic Profile</h3>
 {% if profile_done %}
 <p><span class="pill paid">Profile complete</span> <span class="muted">You can apply for scholarships below. Keep this information up to date — the office reviews it with every application.</span></p>
@@ -63,7 +61,7 @@
 {% endfor %}
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card" style="margin-top:16px" id="applications">
 <h3>3 · My Applications</h3>
 <table>
 <tr><th>Scholarship</th><th>Session</th><th>Applied</th><th>Status</th><th>Admin Remarks</th><th>Awarded (Rs)</th></tr>
@@ -81,6 +79,5 @@
 {% endfor %}
 </table>
 <p class="muted">Note: an approved award is recorded on the application. In this version it does not change your fee vouchers or Account Statement.</p>
-</div>
 </div>
 {% endblock %}

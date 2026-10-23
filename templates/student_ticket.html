@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='tickets') }}">← Back to Support Tickets</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>Ticket #{{ ticket.id }} — {{ ticket.subject }}</h2>
 <span class="pill {{ 'paid' if ticket.status=='Resolved' else 'submitted' if ticket.status=='Open' else 'split' if ticket.status=='Closed' else 'pending' }}">{{ ticket.status }}</span></div>
 <p class="muted">Category: {{ ticket.category }} · Created {{ ticket.created_at[:16] if ticket.created_at else '—' }} · Last updated {{ ticket.updated_at[:16] if ticket.updated_at else '—' }}</p>
@@ -24,5 +22,4 @@
 {% else %}
 <p class="flash" style="margin-top:16px">This ticket is Closed — replies are no longer accepted. Please open a new ticket from the Support Tickets tab if you still need help.</p>
 {% endif %}
-</div>
 {% endblock %}

@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.15
+MY CUVAS — Campus Management System (Demo) v0.16
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -123,6 +123,22 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      cookies (HttpOnly, SameSite=Lax, Secure when deployed).
      Go-live: the homepage demo-accounts box is controlled by the
      show_demo_accounts setting, toggled from the Backup page.
+ 20. v0.16 student portal shell — a UI restructure ONLY (no feature,
+     schema or route changes): every student page now renders inside a
+     MY IUB-style shell (student_base.html) with a left sidebar —
+     student identity block, Home, a 'My Apps' group, a 'Scholarships'
+     group and the Document Repository — mirroring the admin portal's
+     sidebar mechanics in the same green/teal+gold theme. Module
+     navigation moved OUT of the dashboard tab panes into the sidebar;
+     the in-pane navigation buttons were removed while every functional
+     action (challan PDF, paid-proof upload, installments, transcript /
+     slip PDFs, forms) stayed. The dashboard keeps its 10 tabs
+     byte-identical and deep-links via ?tab=<pane> (already supported);
+     /student/documents, /student/tickets and
+     /student/scholarships/profile exist as GET aliases that redirect
+     to the matching dashboard pane / scholarships section so sidebar
+     and bookmark URLs resolve. A context processor supplies the
+     sidebar identity (shell_student) to every student page.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -270,6 +286,27 @@ def close_db(exc=None):
     db = g.pop("db", None)
     if db is not None:
         db.conn.close()
+
+
+@app.context_processor
+def _student_shell_context():
+    """v0.16: identity data for the student sidebar shell.
+
+    Several student pages (transport, campus, vehicle, ticket thread)
+    do not load the student record for their own content; the sidebar
+    needs name / registration no / program on EVERY student page, so
+    it is supplied here instead of changing those views. Presentation
+    only — returns {} for every non-student render."""
+    if session.get("role") != "student" or not session.get("student_id"):
+        return {}
+    try:
+        st = get_db().execute(
+            """SELECT s.name, s.registration_no, p.name AS prog
+               FROM students s LEFT JOIN programs p ON p.id=s.program_id
+               WHERE s.id=?""", (session["student_id"],)).fetchone()
+    except Exception:
+        st = None
+    return {"shell_student": st}
 
 
 LIKE = "ILIKE" if PG else "LIKE"  # case-insensitive search on both backends
@@ -4192,6 +4229,14 @@ def _own_document_or_none(db, doc_id):
     return doc
 
 
+@app.route("/student/documents")
+@role_required("student")
+def student_documents():
+    """v0.16 alias: My Documents lives in the dashboard's documents
+    pane — the sidebar / bookmark URL resolves to it."""
+    return redirect(url_for("student_dashboard", tab="documents"))
+
+
 @app.route("/student/documents/upload", methods=["POST"])
 @role_required("student")
 def student_document_upload():
@@ -4355,6 +4400,14 @@ def _add_ticket_message(db, ticket, role, name, body):
         "INSERT INTO ticket_messages (ticket_id,sender_role,sender_name,body,created_at) "
         "VALUES (?,?,?,?,?)", (ticket["id"], role, name, body, _now()))
     db.execute("UPDATE tickets SET updated_at=? WHERE id=?", (_now(), ticket["id"]))
+
+
+@app.route("/student/tickets")
+@role_required("student")
+def student_tickets():
+    """v0.16 alias: Support Tickets lives in the dashboard's tickets
+    pane — the sidebar / bookmark URL resolves to it."""
+    return redirect(url_for("student_dashboard", tab="tickets"))
 
 
 @app.route("/student/tickets/new", methods=["POST"])
@@ -5903,6 +5956,15 @@ def student_scholarships():
         profile_done=profile_complete(db, sid), schemes=schemes,
         applications=applications, father_statuses=FATHER_STATUSES,
         house_statuses=HOUSE_STATUSES, today=_today())
+
+
+@app.route("/student/scholarships/profile", methods=["GET"])
+@role_required("student")
+def student_scholarship_profile():
+    """v0.16 alias: the socio-economic profile is section 1 of the
+    scholarships page — the sidebar / bookmark URL resolves to it.
+    (Saving the profile stays the POST route below.)"""
+    return redirect(url_for("student_scholarships") + "?view=profile#profile")
 
 
 @app.route("/student/scholarships/profile", methods=["POST"])

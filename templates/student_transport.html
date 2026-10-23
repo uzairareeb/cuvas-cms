@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>Transport</h2></div>
 <p class="muted">University bus routes and morning pickup points. Search by your stop name to find your route.</p>
 
@@ -31,5 +29,4 @@
 {% if not item.stops %}<p class="muted">No stops published for this route yet.</p>{% endif %}
 </div>
 {% endfor %}
-</div>
 {% endblock %}

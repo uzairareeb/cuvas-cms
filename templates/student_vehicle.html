@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='profile') }}">← Back to Profile</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>Vehicle Entry Pass</h2></div>
 <p class="muted">Apply for a campus vehicle entry pass. One vehicle can hold only one approved pass,
 and the same vehicle cannot be applied for twice while a request is pending.</p>
@@ -40,6 +38,5 @@ and the same vehicle cannot be applied for twice while a request is pending.</p>
 {% endfor %}
 </table>
 {% if not passes %}<p class="muted">No vehicle pass applications yet.</p>{% endif %}
-</div>
 </div>
 {% endblock %}

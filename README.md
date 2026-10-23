@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.15
+# MY CUVAS — Campus Management System (Demo) v0.16
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -48,7 +48,13 @@ their own landing dashboards, admin-managed staff logins, and the
 security pass: sign-in lockout, a password policy, security
 headers, a 10 MB upload cap, hardened session cookies, and a
 go-live switch that hides the demo accounts from the public
-homepage — see the v0.15 section below.
+homepage — see the v0.15 section below. **v0.16** is a UI
+restructure of the student portal only: every student page now
+renders inside a MY IUB-style shell with a left sidebar (identity
+block, Home, a *My Apps* group, a *Scholarships* group and the
+Document Repository), and the navigation buttons that used to sit
+inside the dashboard tab panes are gone — see the v0.16 section
+below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -910,6 +916,50 @@ public homepage shows the box only while it is on. The admin
 toggles it from the **Go-Live** card on `/admin/backup`
 (audited as `demo_accounts_toggled`).
 
+## Student Portal Shell (v0.16)
+
+A layout-only restructure of the student portal in the MY IUB
+frame — no feature, schema or data changes, and the admin /
+faculty shells are untouched. Every student page (dashboard,
+documents/tickets panes, attendance, clearance, scholarships,
+course repeat, timetable, transport, campus life, vehicle entry
+and the ticket thread) now renders inside `student_base.html`,
+which mirrors `admin_base.html`'s mechanics (top bar from
+`base.html`, a `.layout` flex row, the same `.sidebar` styling
+and green/teal+gold theme):
+
+- **Sidebar** — a student identity block (initials avatar, full
+  name, registration number, programme — supplied to every page
+  by a small context processor, `shell_student`), **Home**, a
+  **My Apps** group (My Documents, My Fee Vouchers, Support
+  Tickets, My Attendance, My Clearance, Scholarships, Course
+  Repeat / Improvement, View Time Table, Transport, Campus Life,
+  Vehicle Entry, My Student Card), a **Scholarships** group
+  (My Scholarship Profile, Apply / My Applications) and the
+  **Document Repository**. On narrow screens the student layout
+  stacks (sidebar on top); the admin/faculty layouts are
+  unchanged.
+- **Active highlighting** — the sidebar item for the current
+  page carries `class="active"`, derived from the request path
+  (and from `?tab=` / `?view=` for dashboard panes and the
+  scholarship profile section).
+- **Dashboard** — unchanged content: the same 10 tabs with
+  byte-identical labels, the same panes and the same tab JS, now
+  inside the shell. Deep links work via `?tab=<pane>` (e.g.
+  `?tab=voucher` for My Fee Vouchers) and via `#<pane>` hashes;
+  three GET aliases resolve bookmark/sidebar URLs onto the
+  panes: `/student/documents` → `?tab=documents`,
+  `/student/tickets` → `?tab=tickets`,
+  `/student/scholarships/profile` → the scholarships page's
+  profile section.
+- **De-cluttered panes** — the navigation buttons added inside
+  tab panes in earlier steps were removed (Profile: student
+  card, clearance, transport, campus life, vehicle entry;
+  Enrollments: attendance, timetable; Transcript: course
+  repeat). Everything functional stayed: challan PDF download,
+  paid-proof upload, Create 2 Installments, transcript and
+  roll-slip PDFs, and every form.
+
 ## Go-Live Checklist
 
 Before real users arrive:
@@ -1221,7 +1271,34 @@ present before boot, gone after, every user row preserved, all
 five roles able to sign in); `backfill_v15` seeds the demo staff
 logins and the `show_demo_accounts` setting only-when-absent.
 
-## Not in v0.15
+`verify_v16.py` adds a 52-check pass over the student portal
+shell (sidebar present with the identity block and every My
+Apps / Scholarships label + href on the dashboard and on the
+attendance, clearance, repeat, timetable, transport, campus,
+vehicle, scholarships and ticket-thread pages; per-page active
+highlighting that differs between pages; the removed in-pane
+navigation buttons gone from the Profile / Enrollments /
+Transcript panes while the functional voucher actions — challan
+PDF, Create 2 Installments, paid-proof upload — and the
+transcript / slip PDF downloads remain; `?tab=` deep links
+activating panes and highlighting their sidebar items; the
+three GET aliases redirecting onto the panes; the 10 dashboard
+tab labels byte-identical; a second student seeing only their
+own identity in the shell and still getting 404 on the first
+student's ticket thread and document; admin, faculty and public
+pages carrying no student sidebar). v0.16 result: **843 of 844
+checks pass on each backend** (SQLite and PostgreSQL identical:
+43 + 52 + 60 + 72 + 64 + 52 + 59 + 52 + 63/64 + 51 + 60 + 68 +
+95 + 52) — with **one known, deliberate exception**:
+`verify_v11.py`'s check *"baseline web CGPA 1.2 + Repeat button
+in Transcript tab"* asserts the literal string
+`Course Repeat / Improvement` inside the Transcript pane; that
+button was removed on purpose in this restructure (the module
+now lives in the sidebar, with the same label), so that single
+check fails by design while every other v11 check passes. The
+suite file itself was not edited.
+
+## Not in v0.16
 
 Posting an approved scholarship award to the fee ledger /
 vouchers, surveys (deferred by the user), backup restore

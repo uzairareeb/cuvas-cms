@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='transcript') }}">← Back to Transcript</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>Course Repeat / Improvement</h2></div>
 <p class="muted">{{ student.name }} · {{ student.registration_no }} · {{ student.prog_name }} · {{ student.dept_name }}</p>
 
@@ -58,6 +56,5 @@
 {% endfor %}
 </table>
 <p class="muted">A request can be cancelled only while it is still awaiting review — once approved, a fee voucher has been issued against it. Pay an approved request's voucher from the <strong>Financial Voucher</strong> tab (upload the paid proof there); enrolment completes when the accounts office verifies the payment.</p>
-</div>
 </div>
 {% endblock %}

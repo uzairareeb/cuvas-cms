@@ -1,7 +1,5 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="wrap">
-<p><a href="{{ url_for('student_dashboard', tab='enrollments') }}">← Back to Course Enrollments</a></p>
+{% extends "student_base.html" %}
+{% block student_body %}
 <div class="toolbar"><h2>My Time Table</h2>
 <a class="btn green" href="{{ url_for('student_timetable_pdf') }}">⬇ Download PDF</a></div>
 <p class="muted">{{ student.name }} · {{ student.registration_no }} · Session: {{ sess.name if sess else '—' }} —
@@ -24,5 +22,4 @@ classes for the courses you are enrolled in this session.</p>
 </table>
 </div>
 {% endfor %}
-</div>
 {% endblock %}

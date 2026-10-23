@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block body %}
+{# v0.16 student shell — MY IUB-style frame: the sidebar carries ALL module
+   navigation (the dashboard tab panes no longer hold navigation buttons).
+   The active item is derived from the request: dashboard panes reached via
+   ?tab= highlight their sidebar entry, sub-pages highlight their own. #}
+{% set _p = request.path %}
+{% set _t = request.args.get('tab', '') %}
+{% set _v = request.args.get('view', '') %}
+{% set active_nav =
+    'documents' if (_p == '/student' and _t == 'documents') else
+    'tickets' if (_p == '/student' and _t == 'tickets') or _p.startswith('/student/tickets') else
+    'vouchers' if (_p == '/student' and _t == 'voucher') else
+    'attendance' if _p == '/student/attendance' else
+    'clearance' if _p.startswith('/student/clearance') else
+    'sch_profile' if _p.startswith('/student/scholarships') and _v == 'profile' else
+    'scholarships' if _p.startswith('/student/scholarships') else
+    'repeat' if _p.startswith('/student/repeat') else
+    'timetable' if _p.startswith('/student/timetable') else
+    'transport' if _p == '/student/transport' else
+    'campus' if _p == '/student/campus' else
+    'vehicle' if _p.startswith('/student/vehicle') else
+    'home' %}
+<div class="layout student-layout">
+<aside class="sidebar student-sidebar">
+<div class="who">{% if shell_student and shell_student.name %}{% set _np = shell_student.name.split() %}
+<div class="avatar">{{ (_np[0][0] ~ (_np[-1][0] if _np|length > 1 else ''))|upper }}</div>
+<div><div class="who-name">{{ shell_student.name }}</div>
+<div class="who-sub">{{ shell_student.registration_no }}</div>
+{% if shell_student.prog %}<div class="who-sub">{{ shell_student.prog }}</div>{% endif %}</div>
+{% else %}<div><div class="who-name">{{ session.display_name }}</div></div>{% endif %}</div>
+<a{% if active_nav == 'home' %} class="active"{% endif %} href="{{ url_for('student_dashboard') }}">🏠 Home</a>
+<div class="nav-label">My Apps</div>
+<a{% if active_nav == 'documents' %} class="active"{% endif %} href="{{ url_for('student_documents') }}">📁 My Documents</a>
+<a{% if active_nav == 'vouchers' %} class="active"{% endif %} href="{{ url_for('student_dashboard', tab='voucher') }}">🎫 My Fee Vouchers</a>
+<a{% if active_nav == 'tickets' %} class="active"{% endif %} href="{{ url_for('student_tickets') }}">🎧 Support Tickets</a>
+<a{% if active_nav == 'attendance' %} class="active"{% endif %} href="{{ url_for('student_attendance') }}">📅 My Attendance</a>
+<a{% if active_nav == 'clearance' %} class="active"{% endif %} href="{{ url_for('student_clearance') }}">✅ My Clearance</a>
+<a{% if active_nav in ('scholarships', 'sch_profile') %} class="active"{% endif %} href="{{ url_for('student_scholarships') }}">🎓 Scholarships</a>
+<a{% if active_nav == 'repeat' %} class="active"{% endif %} href="{{ url_for('student_repeat') }}">🔁 Course Repeat / Improvement</a>
+<a{% if active_nav == 'timetable' %} class="active"{% endif %} href="{{ url_for('student_timetable') }}">🗓 View Time Table</a>
+<a{% if active_nav == 'transport' %} class="active"{% endif %} href="{{ url_for('student_transport') }}">🚌 Transport</a>
+<a{% if active_nav == 'campus' %} class="active"{% endif %} href="{{ url_for('student_campus') }}">🌐 Campus Life</a>
+<a{% if active_nav == 'vehicle' %} class="active"{% endif %} href="{{ url_for('student_vehicle') }}">🚗 Vehicle Entry</a>
+<a href="{{ url_for('student_card_pdf') }}">🪪 My Student Card</a>
+<div class="nav-label">Scholarships</div>
+<a{% if active_nav == 'sch_profile' %} class="active"{% endif %} href="{{ url_for('student_scholarship_profile') }}">👤 My Scholarship Profile</a>
+<a{% if active_nav == 'scholarships' %} class="active"{% endif %} href="{{ url_for('student_scholarships') }}">📝 Apply / My Applications</a>
+<a href="{{ url_for('student_dashboard', tab='news') }}#repository">📁 Document Repository</a>
+<a href="{{ url_for('logout') }}">🚪 Sign out</a>
+</aside>
+<main class="main">{% block student_body %}{% endblock %}</main>
+</div>
+{% endblock %}
