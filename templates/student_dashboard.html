@@ -92,7 +92,7 @@
 <table><tr><th>Fee Head</th><th>Amount (Rs)</th></tr>
 {% for f in fee_lines %}<tr><td>{{ f.head }}</td><td>{{ "{:,}".format(f.amount) }}</td></tr>{% endfor %}
 <tr><th>Total</th><th>{{ "{:,}".format(fee_total) }}</th></tr></table></div>
-<div class="card"><h3>Scholarships</h3><p>No scholarship awarded yet (Demo).</p><p class="muted">Demo Merit Scholarship — applications open in a later phase.</p></div>
+<div class="card"><h3>Scholarships</h3><p>Need-based and merit scholarships are open for application. Keep your socio-economic profile complete, apply online, and track the decision here.</p><p><a class="btn green" href="{{ url_for('student_scholarships') }}">🎓 Scholarships — My Profile &amp; Applications</a></p></div>
 <div class="card"><h3>Remarks</h3><p>Your fee plan is set per program, session &amp; semester by the accounts office. Scholarships, when awarded, will reflect here and in the Account Statement.</p></div>
 </div></section>
 

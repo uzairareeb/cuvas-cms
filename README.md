@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.9
+# MY CUVAS — Campus Management System (Demo) v0.10
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -16,7 +16,10 @@ auto-created logins, course assignments and a teacher portal for rosters
 and marks entry — see the v0.7 section below. **Step 12 (v0.8)** adds
 attendance, and **Step 13 (v0.9)** adds degree clearance with an
 auto-evaluated Accounts check and a certificate PDF — see the v0.9
-section below.
+section below. **Step 14 (v0.10)** adds scholarships — admin-managed
+schemes, a per-student socio-economic profile that gates applying,
+and an admin review flow with recorded awards — see the v0.10 section
+below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -100,6 +103,15 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   status filter + search; per-item Clear / Object; certificate PDF) and
   `/admin/clearance/units` — manage the clearance units (add / rename /
   activate / deactivate)
+- `/student/scholarships` — the student's socio-economic profile form,
+  the open scholarship schemes with apply forms, and their applications
+  with decisions; linked by a **Scholarships** button in the Fee Plan &
+  Scholarships tab — see the Scholarships section below
+- `/admin/scholarships` — scholarship schemes (create / edit / delete,
+  open toggle, deadline) and the applications list (scheme + status
+  filters, name / reg-no search); `/admin/scholarships/applications/<id>`
+  is the review page (full profile, transcript CGPA, ledger dues,
+  Under Review / Approve / Reject decision)
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -346,6 +358,58 @@ published, keeping the demo transcript (CGPA 3.63) exactly as it was.
   ever see their own request: a recheck POST against another student's
   item returns 404.
 
+## Scholarships (Step 14, v0.10)
+
+- **Model** (three new tables, plain INTEGER ids like
+  `enrollments`/`results`/`attendance`/`clearance`): `scholarship_schemes`
+  (name, provider, description, eligibility, is_open, nullable deadline),
+  `scholarship_profiles` (one per student — `student_id` UNIQUE; father /
+  guardian details, family size, monthly income / expenses, house status,
+  and the bank account used for disbursement) and
+  `scholarship_applications` (student + scheme + **session**, statement,
+  status Applied / Under Review / Approved / Rejected, admin remarks,
+  awarded amount, decided_by / decided_at; unique per student + scheme +
+  session). The application's session is the current session at apply
+  time (`current_session`: the most recently added open session).
+- **Schemes seed** (`backfill_v10`, only while the schemes table is
+  empty): **Need-Based Scholarship** (provider “University / HEC”;
+  low family income, complete socio-economic profile required) and
+  **Merit Scholarship** (provider “University”; strong CGPA). Both open,
+  no deadline, and **no amounts are invented**. Admin → Scholarships
+  can create / edit / close schemes and set deadlines; a scheme can be
+  deleted only while it has no applications.
+- **Profile gate**: a profile counts as **complete** (`profile_complete`)
+  when it exists with a father **or** guardian name **and** a monthly
+  income. The student page (`/student/scholarships`, linked by a
+  Scholarships button in the Fee Plan & Scholarships tab — the
+  dashboard's 10 tabs and labels are unchanged) has three sections:
+  the profile form (prefilled, save = create-or-update), the open
+  schemes, and the student's own applications. Applying is refused
+  server-side with a friendly flash when the profile is incomplete,
+  the scheme is closed, the deadline has passed (the scheme then shows
+  “Closed (deadline passed)”), or the student already applied to that
+  scheme in the current session.
+- **Admin review** (`/admin/scholarships`, sidebar link): schemes table
+  with per-scheme application counts, and the applications list with
+  scheme + status filters and name / reg-no search. The review page
+  (`/admin/scholarships/applications/<id>`) shows the student's identity
+  (program / department / session), the **full socio-economic profile**,
+  the **transcript CGPA** computed by `transcript_data` — the same
+  number the student's transcript shows — and the **outstanding dues**
+  from `student_outstanding` (the ledger computation behind the Account
+  Statement), plus the student's statement. Decisions: **Under Review**
+  (can still be decided later), **Approve** (awarded amount required;
+  remarks optional) and **Reject** (**remarks required**). Approve /
+  Reject stamp `decided_by` / `decided_at` and are **final** — the
+  decision form is replaced by a read-only summary.
+- **Award ≠ ledger**: approving records the awarded amount on the
+  application **only**. It writes nothing to `ledger_entries`, creates
+  no voucher and does not change the Account Statement — disbursement
+  through the fee system is a later step, deliberately out of scope
+  here. Students see their decision, remarks and awarded amount in the
+  “My Applications” section; one student's profile and applications
+  are never visible to another student.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -440,8 +504,30 @@ three clearance tables dropped from a booted database): the next boot
 recreates them, re-seeds the 7 units, keeps all demo data, and a
 further boot is a strict no-op.
 
-## Not in v0.9
+`verify_v10.py` adds a 52-check pass over Step 14 (schemes seeded open
+with no deadline; profile save + update round-trip; applying blocked
+with no profile and with an income-less partial profile — no rows
+created; applying succeeds once complete and records the CURRENT
+session; duplicate application blocked; closed-scheme and
+past-deadline applications blocked — the deadline is set to yesterday
+by a fixture; the admin detail page shows the full profile, CGPA 3.63
+for the demo student and the ledger's Rs 47,500 outstanding; Approve
+refused without an amount, Under Review carries no decision stamp,
+Approve stamps amount + remarks + decider and the student sees all
+three; a decided application cannot be re-decided; Reject refused
+without remarks and the student sees the remarks; student Two's page
+contains none of student One's distinctive profile values, statement
+or remarks; scheme delete blocked while applications exist; approving
+never touches the ledger — row count and the demo balance unchanged;
+student + faculty logins rejected from the admin scholarship pages).
+v0.10 result: **all eight suites ALL PASS on both backends** (SQLite
+and PostgreSQL identical: 43 + 52 + 60 + 72 + 64 + 52 + 59 + 52 = 454
+checks). Migration note: v0.10 adds three new tables via the boot DDL
+plus the guarded `backfill_v10` scheme seed, so a v0.9 database boots
+into v0.10 with its data untouched and a second boot is a no-op.
 
-Scholarships application flow, course repeat, timetable, surveys,
-dept/accounts/COE portals — the rest of Phase 2 (see
-`../architecture.md`).
+## Not in v0.10
+
+Posting an approved scholarship award to the fee ledger / vouchers,
+course repeat, timetable, surveys, dept/accounts/COE portals — the
+rest of Phase 2 (see `../architecture.md`).

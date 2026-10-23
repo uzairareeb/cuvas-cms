@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.9
+MY CUVAS — Campus Management System (Demo) v0.10
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -43,6 +43,16 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      objection needs a remark), the student can request a recheck of an
      objected item, and once every item is Cleared the request completes
      and a clearance certificate PDF becomes downloadable.
+ 14. v0.10 scholarships — scholarship schemes (admin CRUD, open/close +
+     deadline), a per-student socio-economic profile (family + bank
+     details, one record per student) that must be COMPLETE before the
+     student can apply, and applications (one per student + scheme +
+     session) reviewed on an admin detail page that shows the profile,
+     the transcript CGPA (same helper as the transcript) and the ledger
+     outstanding dues. Admins set Under Review, Approve (with an awarded
+     amount) or Reject (remark required); a decided application is
+     final. Approving records the award ONLY — it never writes to the
+     fee ledger in this version.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -285,6 +295,27 @@ DDL = [
         action_by TEXT, action_at TEXT,
         recheck_requested INTEGER DEFAULT 0, created_at TEXT,
         UNIQUE(request_id, unit_id))""",
+    # --- v0.10 scholarships (new tables only; plain INTEGER ids like
+    # enrollments/results/attendance/clearance — no REFERENCES, so older
+    # migration simulations stay safe on PG) ---
+    f"""CREATE TABLE IF NOT EXISTS scholarship_schemes (
+        id {_PK}, name TEXT NOT NULL, provider TEXT, description TEXT,
+        eligibility TEXT, is_open INTEGER DEFAULT 1, deadline TEXT,
+        created_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS scholarship_profiles (
+        id {_PK}, student_id INTEGER UNIQUE NOT NULL,
+        father_name TEXT, father_status TEXT, father_occupation TEXT,
+        guardian_name TEXT, guardian_relation TEXT,
+        family_members INTEGER, siblings_studying INTEGER,
+        monthly_income INTEGER, monthly_expenses INTEGER,
+        house_status TEXT, bank_name TEXT, account_title TEXT,
+        account_number TEXT, bank_branch TEXT, updated_at TEXT)""",
+    f"""CREATE TABLE IF NOT EXISTS scholarship_applications (
+        id {_PK}, student_id INTEGER, scheme_id INTEGER, session_id INTEGER,
+        statement TEXT, status TEXT DEFAULT 'Applied',
+        admin_remarks TEXT, awarded_amount INTEGER,
+        decided_by TEXT, decided_at TEXT, created_at TEXT,
+        UNIQUE(student_id, scheme_id, session_id))""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -343,6 +374,7 @@ def init_db():
     backfill_v06(db)
     backfill_v07(db)
     backfill_v09(db)
+    backfill_v10(db)
     db.commit()
     db.conn.close()
 
@@ -555,6 +587,34 @@ def backfill_v09(db):
         db.insert(
             "INSERT INTO clearance_units (name,sort_order,is_active,is_accounts) "
             "VALUES (?,?,1,?)", (name, i, is_accounts))
+
+
+# ------------------------------------------------------- v0.10 scholarships seed
+DEFAULT_SCHOLARSHIP_SCHEMES = [
+    ("Need-Based Scholarship", "University / HEC",
+     "Financial assistance for enrolled students who need support to "
+     "continue their studies.",
+     "For enrolled students whose family income is low; requires a "
+     "complete socio-economic profile."),
+    ("Merit Scholarship", "University",
+     "Recognition and support for enrolled students with outstanding "
+     "academic performance.",
+     "For enrolled students with strong academic standing (CGPA)."),
+]
+
+
+def backfill_v10(db):
+    """Idempotent v0.10 migration: seed the two generic scholarship
+    schemes ONLY while the schemes table is empty. A strict no-op
+    afterwards, so admin edits/closures are never undone."""
+    if db.execute("SELECT COUNT(*) c FROM scholarship_schemes").fetchone()["c"]:
+        return
+    for name, provider, description, eligibility in DEFAULT_SCHOLARSHIP_SCHEMES:
+        db.insert(
+            """INSERT INTO scholarship_schemes (name,provider,description,
+               eligibility,is_open,deadline,created_at)
+               VALUES (?,?,?,?,1,NULL,?)""",
+            (name, provider, description, eligibility, _now()))
 
 
 def _today():
@@ -5003,6 +5063,422 @@ def admin_student_card_pdf(student_id):
                      as_attachment=True,
                      download_name=f"student-card-{student['registration_no']}.pdf",
                      mimetype="application/pdf")
+
+
+# ================================================================ v0.10 SCHOLARSHIPS
+# Scholarship schemes (admin CRUD) + a per-student socio-economic profile
+# + applications. A student must first complete the profile (father or
+# guardian name AND monthly income); applications are unique per
+# student + scheme + session and can only target a scheme that is open
+# and inside its deadline. The admin reviews each application on a
+# detail page showing the student's identity, the FULL profile, the
+# transcript CGPA (via transcript_data — the same number the student
+# sees) and the ledger outstanding dues (student_outstanding). Statuses:
+# Applied -> Under Review -> Approved (awarded amount recorded) /
+# Rejected (remark required). Approved / Rejected are FINAL. Approving
+# records the award on the application ONLY — it never writes to the
+# append-only fee ledger in this version.
+
+SCHOLARSHIP_STATUSES = ("Applied", "Under Review", "Approved", "Rejected")
+FATHER_STATUSES = ("Alive", "Deceased")
+HOUSE_STATUSES = ("Own", "Rented", "Other")
+
+_PROFILE_TEXT_FIELDS = ("father_name", "father_occupation", "guardian_name",
+                        "guardian_relation", "bank_name", "account_title",
+                        "account_number", "bank_branch")
+_PROFILE_INT_FIELDS = ("family_members", "siblings_studying",
+                       "monthly_income", "monthly_expenses")
+_PROFILE_ALL_FIELDS = (_PROFILE_TEXT_FIELDS + _PROFILE_INT_FIELDS +
+                       ("father_status", "house_status"))
+
+
+def current_session(db):
+    """The latest/current academic session: sessions are created in
+    chronological order, so the current one is the most recently added
+    OPEN session (falling back to the most recently added session) —
+    the same ordering _sheet_args relies on."""
+    row = db.execute(
+        "SELECT * FROM academic_sessions WHERE is_open=1 "
+        "ORDER BY id DESC").fetchone()
+    if not row:
+        row = db.execute(
+            "SELECT * FROM academic_sessions ORDER BY id DESC").fetchone()
+    return row
+
+
+def scholarship_profile(db, student_id):
+    return db.execute(
+        "SELECT * FROM scholarship_profiles WHERE student_id=?",
+        (student_id,)).fetchone()
+
+
+def profile_complete(db, student_id):
+    """A profile counts as complete when it exists with a father or
+    guardian name AND a monthly income filled in."""
+    p = scholarship_profile(db, student_id)
+    if not p:
+        return False
+    return bool((p.get("father_name") or p.get("guardian_name"))
+                and p.get("monthly_income") is not None)
+
+
+def _scheme_apply_state(db, scheme, student_id, sess):
+    """(can_apply, note) for this student + scheme right now."""
+    if not scheme or not scheme.get("is_open", 1):
+        return False, "Closed"
+    if scheme.get("deadline") and scheme["deadline"] < _today():
+        return False, "Closed (deadline passed)"
+    if sess:
+        dup = db.execute(
+            """SELECT id FROM scholarship_applications
+               WHERE student_id=? AND scheme_id=? AND session_id=?""",
+            (student_id, scheme["id"], sess["id"])).fetchone()
+        if dup:
+            return False, "Already applied"
+    return True, "Open"
+
+
+def _application_full(db, app_id):
+    return db.execute(
+        """SELECT a.*, sc.name scheme_name, sc.provider scheme_provider,
+                  ss.name sess_name, s.name student_name, s.registration_no,
+                  s.cnic cnic, p.name prog_name, d.name dept_name
+           FROM scholarship_applications a
+           JOIN scholarship_schemes sc ON sc.id=a.scheme_id
+           JOIN students s ON s.id=a.student_id
+           LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           LEFT JOIN departments d ON d.id=s.department_id
+           WHERE a.id=?""", (app_id,)).fetchone()
+
+
+# ------------------------------------------------------------ student side
+@app.route("/student/scholarships")
+@role_required("student")
+def student_scholarships():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        flash("No student record is linked to this login.", "error")
+        return redirect(url_for("logout"))
+    profile = scholarship_profile(db, sid)
+    sess = current_session(db)
+    schemes = []
+    for sc in db.execute(
+            """SELECT * FROM scholarship_schemes
+               WHERE COALESCE(is_open,1)=1 ORDER BY id""").fetchall():
+        sc = dict(sc)
+        sc["can_apply"], sc["state_note"] = _scheme_apply_state(
+            db, sc, sid, sess)
+        schemes.append(sc)
+    applications = db.execute(
+        """SELECT a.*, sc.name scheme_name, ss.name sess_name
+           FROM scholarship_applications a
+           JOIN scholarship_schemes sc ON sc.id=a.scheme_id
+           LEFT JOIN academic_sessions ss ON ss.id=a.session_id
+           WHERE a.student_id=? ORDER BY a.id DESC""", (sid,)).fetchall()
+    return render_template(
+        "student_scholarships.html", student=student, profile=profile,
+        profile_done=profile_complete(db, sid), schemes=schemes,
+        applications=applications, father_statuses=FATHER_STATUSES,
+        house_statuses=HOUSE_STATUSES, today=_today())
+
+
+@app.route("/student/scholarships/profile", methods=["POST"])
+@role_required("student")
+def student_scholarship_profile_save():
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        abort(404)
+    form = request.form
+    values = {}
+    for f in _PROFILE_TEXT_FIELDS:
+        values[f] = form.get(f, "").strip() or None
+    for f in _PROFILE_INT_FIELDS:
+        values[f] = _int_or_none(form.get(f, "").strip())
+    values["father_status"] = (form.get("father_status")
+                               if form.get("father_status") in FATHER_STATUSES
+                               else None)
+    values["house_status"] = (form.get("house_status")
+                              if form.get("house_status") in HOUSE_STATUSES
+                              else None)
+    existing = scholarship_profile(db, sid)
+    cols = ", ".join(_PROFILE_ALL_FIELDS)
+    if existing:
+        sets = ", ".join(f"{f}=?" for f in _PROFILE_ALL_FIELDS)
+        db.execute(
+            f"UPDATE scholarship_profiles SET {sets}, updated_at=? "
+            "WHERE student_id=?",
+            [values[f] for f in _PROFILE_ALL_FIELDS] + [_now(), sid])
+    else:
+        marks = ", ".join("?" for _ in _PROFILE_ALL_FIELDS)
+        db.execute(
+            f"INSERT INTO scholarship_profiles (student_id, {cols}, "
+            f"updated_at) VALUES (?, {marks}, ?)",
+            [sid] + [values[f] for f in _PROFILE_ALL_FIELDS] + [_now()])
+    db.commit()
+    if profile_complete(db, sid):
+        flash("Socio-economic profile saved — it is complete, so you can "
+              "now apply for scholarships.", "ok")
+    else:
+        flash("Socio-economic profile saved — note it is still incomplete: "
+              "a father or guardian name and the monthly family income are "
+              "required before you can apply.", "ok")
+    return redirect(url_for("student_scholarships"))
+
+
+@app.route("/student/scholarships/<int:scheme_id>/apply", methods=["POST"])
+@role_required("student")
+def student_scholarship_apply(scheme_id):
+    db = get_db()
+    sid = session.get("student_id")
+    student = student_full(db, sid) if sid else None
+    if not student:
+        abort(404)
+    scheme = db.execute("SELECT * FROM scholarship_schemes WHERE id=?",
+                        (scheme_id,)).fetchone()
+    if not scheme:
+        abort(404)
+    if not profile_complete(db, sid):
+        flash("Complete your socio-economic profile before applying.",
+              "error")
+        return redirect(url_for("student_scholarships"))
+    if not scheme.get("is_open", 1):
+        flash(f"'{scheme['name']}' is not open for applications.", "error")
+        return redirect(url_for("student_scholarships"))
+    if scheme.get("deadline") and scheme["deadline"] < _today():
+        flash(f"The deadline for '{scheme['name']}' "
+              f"({scheme['deadline']}) has passed.", "error")
+        return redirect(url_for("student_scholarships"))
+    sess = current_session(db)
+    if not sess:
+        flash("No academic session is configured yet — applications are "
+              "not open.", "error")
+        return redirect(url_for("student_scholarships"))
+    dup = db.execute(
+        """SELECT id FROM scholarship_applications
+           WHERE student_id=? AND scheme_id=? AND session_id=?""",
+        (sid, scheme_id, sess["id"])).fetchone()
+    if dup:
+        flash(f"You have already applied for '{scheme['name']}' in "
+              f"{sess['name']}.", "error")
+        return redirect(url_for("student_scholarships"))
+    try:
+        db.insert(
+            """INSERT INTO scholarship_applications (student_id,scheme_id,
+               session_id,statement,status,created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (sid, scheme_id, sess["id"],
+             request.form.get("statement", "").strip(),
+             "Applied", _now()))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if is_unique_error(exc):
+            flash(f"You have already applied for '{scheme['name']}' in "
+                  f"{sess['name']}.", "error")
+            return redirect(url_for("student_scholarships"))
+        raise
+    flash(f"Application submitted for '{scheme['name']}' "
+          f"({sess['name']}).", "ok")
+    return redirect(url_for("student_scholarships"))
+
+
+# ------------------------------------------------------------ admin: schemes
+def _scheme_form_values(form):
+    return {
+        "name": form.get("name", "").strip(),
+        "provider": form.get("provider", "").strip(),
+        "description": form.get("description", "").strip(),
+        "eligibility": form.get("eligibility", "").strip(),
+        "deadline": form.get("deadline", "").strip() or None,
+        "is_open": 1 if form.get("is_open") else 0,
+    }
+
+
+@app.route("/admin/scholarships/schemes/new", methods=["GET", "POST"])
+@role_required("admin")
+def admin_scholarship_scheme_new():
+    db = get_db()
+    if request.method == "POST":
+        v = _scheme_form_values(request.form)
+        if not v["name"]:
+            flash("Scheme name is required.", "error")
+        else:
+            db.insert(
+                """INSERT INTO scholarship_schemes (name,provider,
+                   description,eligibility,is_open,deadline,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (v["name"], v["provider"], v["description"],
+                 v["eligibility"], v["is_open"], v["deadline"], _now()))
+            db.commit()
+            flash(f"Scholarship scheme '{v['name']}' added.", "ok")
+            return redirect(url_for("admin_scholarships"))
+    return render_template("scholarship_scheme_form.html", scheme=None)
+
+
+@app.route("/admin/scholarships/schemes/<int:scheme_id>/edit",
+           methods=["GET", "POST"])
+@role_required("admin")
+def admin_scholarship_scheme_edit(scheme_id):
+    db = get_db()
+    scheme = db.execute("SELECT * FROM scholarship_schemes WHERE id=?",
+                        (scheme_id,)).fetchone()
+    if not scheme:
+        flash("Scholarship scheme not found.", "error")
+        return redirect(url_for("admin_scholarships"))
+    if request.method == "POST":
+        v = _scheme_form_values(request.form)
+        if not v["name"]:
+            flash("Scheme name is required.", "error")
+        else:
+            db.execute(
+                """UPDATE scholarship_schemes SET name=?, provider=?,
+                   description=?, eligibility=?, is_open=?, deadline=?
+                   WHERE id=?""",
+                (v["name"], v["provider"], v["description"],
+                 v["eligibility"], v["is_open"], v["deadline"], scheme_id))
+            db.commit()
+            flash(f"Scholarship scheme '{v['name']}' updated.", "ok")
+            return redirect(url_for("admin_scholarships"))
+    return render_template("scholarship_scheme_form.html", scheme=scheme)
+
+
+@app.route("/admin/scholarships/schemes/<int:scheme_id>/delete",
+           methods=["POST"])
+@role_required("admin")
+def admin_scholarship_scheme_delete(scheme_id):
+    db = get_db()
+    scheme = db.execute("SELECT * FROM scholarship_schemes WHERE id=?",
+                        (scheme_id,)).fetchone()
+    if not scheme:
+        flash("Scholarship scheme not found.", "error")
+        return redirect(url_for("admin_scholarships"))
+    used = db.execute(
+        "SELECT COUNT(*) c FROM scholarship_applications WHERE scheme_id=?",
+        (scheme_id,)).fetchone()["c"]
+    if used:
+        flash(f"Cannot delete scheme '{scheme['name']}': it has {used} "
+              "application(s). Close it instead so the history stays.",
+              "error")
+        return redirect(url_for("admin_scholarships"))
+    db.execute("DELETE FROM scholarship_schemes WHERE id=?", (scheme_id,))
+    db.commit()
+    flash(f"Scholarship scheme '{scheme['name']}' deleted.", "ok")
+    return redirect(url_for("admin_scholarships"))
+
+
+# ------------------------------------------------------- admin: applications
+@app.route("/admin/scholarships")
+@role_required("admin")
+def admin_scholarships():
+    db = get_db()
+    schemes = db.execute(
+        """SELECT sc.*, (SELECT COUNT(*) FROM scholarship_applications a
+               WHERE a.scheme_id=sc.id) app_count
+           FROM scholarship_schemes sc ORDER BY sc.id""").fetchall()
+    status = request.args.get("status", "")
+    scheme_id = _int_or_none(request.args.get("scheme_id", ""))
+    q = request.args.get("q", "").strip()
+    sql = ("SELECT a.id FROM scholarship_applications a "
+           "JOIN students s ON s.id=a.student_id WHERE 1=1")
+    params = []
+    if status in SCHOLARSHIP_STATUSES:
+        sql += " AND a.status=?"
+        params.append(status)
+    if scheme_id:
+        sql += " AND a.scheme_id=?"
+        params.append(scheme_id)
+    if q:
+        sql += f" AND (s.name {LIKE} ? OR s.registration_no {LIKE} ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY a.id DESC"
+    rows = [_application_full(db, r["id"])
+            for r in db.execute(sql, params).fetchall()]
+    counts = {s: db.execute(
+        "SELECT COUNT(*) c FROM scholarship_applications WHERE status=?",
+        (s,)).fetchone()["c"] for s in SCHOLARSHIP_STATUSES}
+    return render_template(
+        "admin_scholarships.html", schemes=schemes, rows=rows,
+        counts=counts, status=status, scheme_id=scheme_id, q=q,
+        statuses=SCHOLARSHIP_STATUSES)
+
+
+@app.route("/admin/scholarships/applications/<int:app_id>")
+@role_required("admin")
+def admin_scholarship_application(app_id):
+    db = get_db()
+    appl = _application_full(db, app_id)
+    if not appl:
+        abort(404)
+    student = student_full(db, appl["student_id"])
+    _transcript, cgpa, _ch = transcript_data(
+        db, appl["student_id"], published_only=True)
+    return render_template(
+        "admin_scholarship_application.html", appl=appl, student=student,
+        profile=scholarship_profile(db, appl["student_id"]),
+        profile_done=profile_complete(db, appl["student_id"]),
+        cgpa=cgpa, outstanding=student_outstanding(db, appl["student_id"]))
+
+
+@app.route("/admin/scholarships/applications/<int:app_id>/decide",
+           methods=["POST"])
+@role_required("admin")
+def admin_scholarship_decide(app_id):
+    db = get_db()
+    appl = db.execute("SELECT * FROM scholarship_applications WHERE id=?",
+                      (app_id,)).fetchone()
+    if not appl:
+        abort(404)
+    back = redirect(url_for("admin_scholarship_application", app_id=app_id))
+    if appl["status"] in ("Approved", "Rejected"):
+        flash("This application has already been decided — the decision "
+              "is final.", "error")
+        return back
+    decision = request.form.get("decision", "")
+    remarks = request.form.get("admin_remarks", "").strip()
+    if decision == "Under Review":
+        db.execute(
+            "UPDATE scholarship_applications SET status='Under Review' "
+            "WHERE id=?", (app_id,))
+        db.commit()
+        flash("Application marked Under Review.", "ok")
+        return back
+    if decision == "Approve":
+        amount = _int_or_none(request.form.get("awarded_amount", "").strip())
+        if amount is None or amount < 0:
+            flash("Enter the awarded amount (Rs) to approve this "
+                  "application.", "error")
+            return back
+        db.execute(
+            """UPDATE scholarship_applications SET status='Approved',
+               awarded_amount=?, admin_remarks=?, decided_by=?,
+               decided_at=? WHERE id=?""",
+            (amount, remarks or None, session.get("display_name"), _now(),
+             app_id))
+        db.commit()
+        flash(f"Application approved — award of Rs {amount:,} recorded. "
+              "(The award is recorded here only; it does not post to the "
+              "fee ledger.)", "ok")
+        return back
+    if decision == "Reject":
+        if not remarks:
+            flash("Remarks are required when rejecting — the student "
+                  "needs to know why.", "error")
+            return back
+        db.execute(
+            """UPDATE scholarship_applications SET status='Rejected',
+               awarded_amount=NULL, admin_remarks=?, decided_by=?,
+               decided_at=? WHERE id=?""",
+            (remarks, session.get("display_name"), _now(), app_id))
+        db.commit()
+        flash("Application rejected.", "ok")
+        return back
+    flash("Please choose a decision.", "error")
+    return back
 
 
 if __name__ == "__main__":

@@ -1,0 +1,57 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Scholarships</h2>
+<a class="btn green" href="{{ url_for('admin_scholarship_scheme_new') }}">+ New Scheme</a></div>
+
+<h3>Schemes</h3>
+<table>
+<tr><th>Scheme</th><th>Provider</th><th>Eligibility</th><th>Deadline</th><th>Status</th><th>Applications</th><th>Actions</th></tr>
+{% for sc in schemes %}
+<tr>
+<td><strong>{{ sc.name }}</strong>{% if sc.description %}<br><span class="muted">{{ sc.description }}</span>{% endif %}</td>
+<td>{{ sc.provider or '—' }}</td>
+<td>{{ sc.eligibility or '—' }}</td>
+<td>{{ sc.deadline or '—' }}</td>
+<td><span class="pill {{ 'paid' if sc.is_open else 'rejected' }}">{{ 'Open' if sc.is_open else 'Closed' }}</span></td>
+<td>{{ sc.app_count }}</td>
+<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_scholarship_scheme_edit', scheme_id=sc.id) }}">Edit</a>
+<form method="post" action="{{ url_for('admin_scholarship_scheme_delete', scheme_id=sc.id) }}" onsubmit="return confirm('Delete scheme {{ sc.name }}?');"><button class="btn small danger" type="submit">Delete</button></form></td>
+</tr>
+{% else %}
+<tr><td colspan="7" class="muted">No scholarship schemes yet.</td></tr>
+{% endfor %}
+</table>
+<p class="muted">A scheme can only be deleted while it has no applications — close it instead to keep the history. A scheme past its deadline shows as closed to students automatically.</p>
+
+<h3 style="margin-top:26px">Applications</h3>
+<p class="muted">Applied: <strong>{{ counts['Applied'] }}</strong> · Under Review: <strong>{{ counts['Under Review'] }}</strong> · Approved: <strong>{{ counts['Approved'] }}</strong> · Rejected: <strong>{{ counts['Rejected'] }}</strong></p>
+<form method="get" class="toolbar">
+<select name="scheme_id">
+<option value="" {% if not scheme_id %}selected{% endif %}>All schemes</option>
+{% for sc in schemes %}<option value="{{ sc.id }}" {% if scheme_id==sc.id %}selected{% endif %}>{{ sc.name }}</option>{% endfor %}
+</select>
+<select name="status">
+<option value="" {% if not status %}selected{% endif %}>All statuses</option>
+{% for s in statuses %}<option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+</select>
+<input type="text" name="q" value="{{ q }}" placeholder="Search name / registration no">
+<button class="btn" type="submit">Search</button>
+</form>
+<table>
+<tr><th>Student</th><th>Registration No</th><th>Scheme</th><th>Session</th><th>Applied</th><th>Status</th><th>Awarded (Rs)</th><th></th></tr>
+{% for a in rows %}
+<tr>
+<td>{{ a.student_name }}</td>
+<td>{{ a.registration_no }}</td>
+<td>{{ a.scheme_name }}</td>
+<td>{{ a.sess_name or '—' }}</td>
+<td>{{ a.created_at[:10] if a.created_at else '—' }}</td>
+<td><span class="pill {{ 'paid' if a.status=='Approved' else 'rejected' if a.status=='Rejected' else 'pending' if a.status=='Under Review' else 'submitted' }}">{{ a.status }}</span></td>
+<td>{% if a.status == 'Approved' and a.awarded_amount is not none %}{{ "{:,}".format(a.awarded_amount) }}{% else %}—{% endif %}</td>
+<td><a class="btn small" href="{{ url_for('admin_scholarship_application', app_id=a.id) }}">Review</a></td>
+</tr>
+{% else %}
+<tr><td colspan="8" class="muted">No applications match.</td></tr>
+{% endfor %}
+</table>
+{% endblock %}

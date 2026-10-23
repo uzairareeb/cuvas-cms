@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+<p><a href="{{ url_for('student_dashboard', tab='feeplan') }}">← Back to Fee Plan &amp; Scholarships</a></p>
+<div class="toolbar"><h2>Scholarships</h2></div>
+<p class="muted">{{ student.name }} · {{ student.registration_no }} · {{ student.prog_name }} · {{ student.dept_name }}</p>
+
+<div class="card">
+<h3>1 · My Socio-Economic Profile</h3>
+{% if profile_done %}
+<p><span class="pill paid">Profile complete</span> <span class="muted">You can apply for scholarships below. Keep this information up to date — the office reviews it with every application.</span></p>
+{% elif profile %}
+<p><span class="pill pending">Profile incomplete</span> <span class="muted">A father or guardian name <strong>and</strong> the monthly family income are required before you can apply.</span></p>
+{% else %}
+<p><span class="pill pending">No profile yet</span> <span class="muted">Fill in and save your socio-economic profile first — scholarship applications open only after it is complete.</span></p>
+{% endif %}
+<form method="post" action="{{ url_for('student_scholarship_profile_save') }}">
+<div class="form-card wide" style="box-shadow:none;border:none;padding:0;max-width:none">
+<div class="form-grid">
+<div><label>Father's name</label><input name="father_name" value="{{ profile.father_name if profile else '' }}"></div>
+<div><label>Father status</label><select name="father_status"><option value="">—</option>{% for s in father_statuses %}<option {{ 'selected' if profile and profile.father_status==s else '' }}>{{ s }}</option>{% endfor %}</select></div>
+<div><label>Father's occupation</label><input name="father_occupation" value="{{ profile.father_occupation if profile else '' }}"></div>
+<div><label>Guardian name (if father deceased / other)</label><input name="guardian_name" value="{{ profile.guardian_name if profile else '' }}"></div>
+<div><label>Guardian relation</label><input name="guardian_relation" value="{{ profile.guardian_relation if profile else '' }}"></div>
+<div><label>Total family members</label><input type="number" min="0" name="family_members" value="{{ profile.family_members if profile and profile.family_members is not none else '' }}"></div>
+<div><label>Siblings studying</label><input type="number" min="0" name="siblings_studying" value="{{ profile.siblings_studying if profile and profile.siblings_studying is not none else '' }}"></div>
+<div><label>Monthly family income (Rs)</label><input type="number" min="0" name="monthly_income" value="{{ profile.monthly_income if profile and profile.monthly_income is not none else '' }}"></div>
+<div><label>Monthly family expenses (Rs)</label><input type="number" min="0" name="monthly_expenses" value="{{ profile.monthly_expenses if profile and profile.monthly_expenses is not none else '' }}"></div>
+<div><label>House status</label><select name="house_status"><option value="">—</option>{% for s in house_statuses %}<option {{ 'selected' if profile and profile.house_status==s else '' }}>{{ s }}</option>{% endfor %}</select></div>
+<div><label>Bank name</label><input name="bank_name" value="{{ profile.bank_name if profile else '' }}"></div>
+<div><label>Account title</label><input name="account_title" value="{{ profile.account_title if profile else '' }}"></div>
+<div><label>Account number</label><input name="account_number" value="{{ profile.account_number if profile else '' }}"></div>
+<div><label>Bank branch</label><input name="bank_branch" value="{{ profile.bank_branch if profile else '' }}"></div>
+</div>
+<div class="form-actions"><button class="btn green" type="submit">Save Profile</button></div>
+</div>
+</form>
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3>2 · Open Scholarships</h3>
+{% for sc in schemes %}
+<div style="border-top:1px solid var(--line);padding:12px 0">
+<p style="margin:0"><strong>{{ sc.name }}</strong> <span class="muted">· {{ sc.provider or '—' }}</span>
+{% if sc.deadline %}<span class="muted">· Deadline: {{ sc.deadline }}</span>{% endif %}
+<span class="pill {{ 'paid' if sc.can_apply else 'pending' }}">{{ 'Open for applications' if sc.can_apply else sc.state_note }}</span></p>
+{% if sc.description %}<p class="muted" style="margin:4px 0">{{ sc.description }}</p>{% endif %}
+{% if sc.eligibility %}<p class="muted" style="margin:4px 0"><em>Eligibility:</em> {{ sc.eligibility }}</p>{% endif %}
+{% if sc.can_apply %}
+<form method="post" action="{{ url_for('student_scholarship_apply', scheme_id=sc.id) }}" style="margin-top:8px">
+<label>Why should you be considered? (statement)</label>
+<textarea name="statement" rows="3" style="width:100%" placeholder="Briefly describe your circumstances / academic standing"></textarea>
+<button class="btn green" type="submit">Apply for {{ sc.name }}</button>
+</form>
+{% elif sc.state_note == 'Already applied' %}
+<p class="muted" style="margin:6px 0">You have already applied for this scheme in the current session — see <strong>My Applications</strong> below.</p>
+{% elif sc.state_note == 'Closed (deadline passed)' %}
+<p class="muted" style="margin:6px 0">This scheme's deadline ({{ sc.deadline }}) has passed, so it can no longer be applied to.</p>
+{% endif %}
+</div>
+{% else %}
+<p class="muted">No scholarship schemes are open right now.</p>
+{% endfor %}
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3>3 · My Applications</h3>
+<table>
+<tr><th>Scholarship</th><th>Session</th><th>Applied</th><th>Status</th><th>Admin Remarks</th><th>Awarded (Rs)</th></tr>
+{% for a in applications %}
+<tr>
+<td>{{ a.scheme_name }}</td>
+<td>{{ a.sess_name or '—' }}</td>
+<td>{{ a.created_at[:10] if a.created_at else '—' }}</td>
+<td><span class="pill {{ 'paid' if a.status=='Approved' else 'rejected' if a.status=='Rejected' else 'pending' if a.status=='Under Review' else 'submitted' }}">{{ a.status }}</span></td>
+<td>{{ a.admin_remarks or '—' }}</td>
+<td>{% if a.status == 'Approved' and a.awarded_amount is not none %}{{ "{:,}".format(a.awarded_amount) }}{% else %}—{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="muted">No applications yet.</td></tr>
+{% endfor %}
+</table>
+<p class="muted">Note: an approved award is recorded on the application. In this version it does not change your fee vouchers or Account Statement.</p>
+</div>
+</div>
+{% endblock %}

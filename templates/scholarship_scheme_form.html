@@ -1,0 +1,18 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>{{ 'Edit Scholarship Scheme' if scheme else 'New Scholarship Scheme' }}</h2>
+<div class="form-card wide"><form method="post">
+<label>Scheme name</label>
+<input name="name" required value="{{ scheme.name if scheme else '' }}" placeholder="e.g. Need-Based Scholarship">
+<label>Provider</label>
+<input name="provider" value="{{ scheme.provider if scheme else '' }}" placeholder="e.g. University / HEC">
+<label>Description</label>
+<textarea name="description" rows="3">{{ scheme.description if scheme else '' }}</textarea>
+<label>Eligibility</label>
+<textarea name="eligibility" rows="3">{{ scheme.eligibility if scheme else '' }}</textarea>
+<label>Deadline (optional — applications close after this date)</label>
+<input type="date" name="deadline" value="{{ scheme.deadline if scheme and scheme.deadline else '' }}">
+<label class="check"><input type="checkbox" name="is_open" {{ 'checked' if not scheme or scheme.is_open else '' }}> Open for applications</label>
+<div class="form-actions"><button class="btn green" type="submit">Save Scheme</button>
+<a class="btn ghost" href="{{ url_for('admin_scholarships') }}">Cancel</a></div>
+</form></div>
+{% endblock %}

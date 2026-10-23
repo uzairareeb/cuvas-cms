@@ -1,0 +1,58 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<p><a href="{{ url_for('admin_scholarships') }}">← Back to Scholarships</a></p>
+<div class="toolbar"><h2>Application #{{ appl.id }} — {{ appl.scheme_name }}</h2>
+<span class="pill {{ 'paid' if appl.status=='Approved' else 'rejected' if appl.status=='Rejected' else 'pending' if appl.status=='Under Review' else 'submitted' }}">{{ appl.status }}</span></div>
+
+<div class="card">
+<h3 style="margin-top:0">Student</h3>
+<table>
+<tr><th>Name</th><td>{{ appl.student_name }}</td><th>Registration No</th><td>{{ appl.registration_no }}</td></tr>
+<tr><th>CNIC</th><td>{{ appl.cnic or '—' }}</td><th>Program</th><td>{{ appl.prog_name or '—' }}</td></tr>
+<tr><th>Department</th><td>{{ appl.dept_name or '—' }}</td><th>Application Session</th><td>{{ appl.sess_name or '—' }}</td></tr>
+<tr><th>Applied</th><td>{{ appl.created_at[:10] if appl.created_at else '—' }}</td><th>Student's Session</th><td>{{ student.sess_name or student.session_name or '—' }}</td></tr>
+<tr><th>CGPA (published results)</th><td><strong>{{ "%.2f"|format(cgpa) }}</strong></td><th>Outstanding dues (ledger)</th><td><strong>Rs {{ "{:,}".format(outstanding) }}</strong></td></tr>
+</table>
+{% if appl.statement %}<p style="margin-bottom:0"><strong>Student's statement:</strong></p><p class="muted" style="margin-top:4px">{{ appl.statement }}</p>{% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3 style="margin-top:0">Socio-Economic Profile {% if profile_done %}<span class="pill paid">Complete</span>{% else %}<span class="pill pending">Incomplete</span>{% endif %}</h3>
+{% if profile %}
+<table>
+<tr><th>Father's Name</th><td>{{ profile.father_name or '—' }}</td><th>Father Status</th><td>{{ profile.father_status or '—' }}</td></tr>
+<tr><th>Father's Occupation</th><td>{{ profile.father_occupation or '—' }}</td><th>Guardian</th><td>{{ profile.guardian_name or '—' }}{% if profile.guardian_relation %} ({{ profile.guardian_relation }}){% endif %}</td></tr>
+<tr><th>Family Members</th><td>{{ profile.family_members if profile.family_members is not none else '—' }}</td><th>Siblings Studying</th><td>{{ profile.siblings_studying if profile.siblings_studying is not none else '—' }}</td></tr>
+<tr><th>Monthly Income (Rs)</th><td>{{ "{:,}".format(profile.monthly_income) if profile.monthly_income is not none else '—' }}</td><th>Monthly Expenses (Rs)</th><td>{{ "{:,}".format(profile.monthly_expenses) if profile.monthly_expenses is not none else '—' }}</td></tr>
+<tr><th>House Status</th><td>{{ profile.house_status or '—' }}</td><th>Profile Updated</th><td>{{ profile.updated_at[:10] if profile.updated_at else '—' }}</td></tr>
+<tr><th>Bank</th><td>{{ profile.bank_name or '—' }}{% if profile.bank_branch %} — {{ profile.bank_branch }}{% endif %}</td><th>Account</th><td>{{ profile.account_title or '—' }}{% if profile.account_number %} · {{ profile.account_number }}{% endif %}</td></tr>
+</table>
+{% else %}
+<p class="muted">This student has not saved a socio-economic profile.</p>
+{% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+<h3 style="margin-top:0">Decision</h3>
+{% if appl.status in ('Approved', 'Rejected') %}
+<p>This application was <strong>{{ appl.status }}</strong>{% if appl.status == 'Approved' and appl.awarded_amount is not none %} with an award of <strong>Rs {{ "{:,}".format(appl.awarded_amount) }}</strong>{% endif %}
+by <strong>{{ appl.decided_by or '—' }}</strong> on {{ appl.decided_at[:10] if appl.decided_at else '—' }}.
+Decisions are final and cannot be changed.</p>
+{% if appl.admin_remarks %}<p><strong>Remarks:</strong> {{ appl.admin_remarks }}</p>{% endif %}
+<p class="muted">The award is recorded on this application only — approving a scholarship does not post anything to the student's fee ledger in this version.</p>
+{% else %}
+<form method="post" action="{{ url_for('admin_scholarship_decide', app_id=appl.id) }}">
+<label>Awarded amount (Rs) — required to Approve</label>
+<input type="number" min="0" name="awarded_amount" value="{{ appl.awarded_amount if appl.awarded_amount is not none else '' }}">
+<label>Admin remarks (required to Reject; shown to the student)</label>
+<textarea name="admin_remarks" rows="3">{{ appl.admin_remarks or '' }}</textarea>
+<div class="form-actions">
+<button class="btn" type="submit" name="decision" value="Under Review">Mark Under Review</button>
+<button class="btn green" type="submit" name="decision" value="Approve">Approve</button>
+<button class="btn danger" type="submit" name="decision" value="Reject">Reject</button>
+</div>
+</form>
+<p class="muted">Approving records the award on this application only — it does not post to the fee ledger in this version.</p>
+{% endif %}
+</div>
+{% endblock %}
