@@ -6,5 +6,5 @@
 <div class="wrap"><h2>Latest Announcements</h2><div class="grid">
 {% for n in news %}<div class="card"><h3>{{ n.title }}</h3><p>{{ n.body }}</p><p class="muted">{{ n.published_at }}</p></div>{% endfor %}
 </div>
-<div class="demo-note"><strong>Demo accounts:</strong> Admin — <code>admin / Admin@123</code> · Student — <code>student / Student@123</code> (demo-only, fictional).</div>
+{% if show_demo %}<div class="demo-note"><strong>Demo accounts:</strong> Admin — <code>admin / Admin@123</code> · Student — <code>student / Student@123</code> · Faculty — <code>faculty / Faculty@123</code> · Accounts Office — <code>accounts / Accounts@123</code> · Controller of Examinations — <code>coe / Coe@123</code> (demo-only, fictional).</div>{% endif %}
 </div>{% endblock %}

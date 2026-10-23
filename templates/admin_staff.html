@@ -1,0 +1,36 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}
+<div class="toolbar"><h2>Staff Logins</h2></div>
+<p class="muted">Office logins for the administration side of the portal. The Accounts Office
+sees fees and vouchers only; the Controller of Examinations sees results and examinations
+only; the Admin sees everything. Students and faculty are managed on their own pages.</p>
+
+<div class="card">
+<h3 style="margin-top:0">Create a Staff Login</h3>
+<form method="post" action="{{ url_for('admin_staff') }}" class="filter-bar">
+<input name="username" placeholder="Username (e.g. accounts2)" required style="min-width:200px">
+<input name="display_name" placeholder="Display name (e.g. Accounts Officer)" required style="min-width:240px">
+<select name="role" required>
+<option value="">— Choose role —</option>
+{% for r in staff_roles %}<option value="{{ r }}">{{ role_labels[r] }}</option>{% endfor %}
+</select>
+<input name="password" type="password" placeholder="Password (min 8 chars, a letter + a digit)" required style="min-width:260px">
+<button class="btn green" type="submit">Create Login</button>
+</form>
+<p class="muted">The password you set is shown once in the confirmation message — note it and hand it to the officer.</p>
+</div>
+
+<h3 style="margin-top:26px">Existing Staff Logins</h3>
+<table><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Status</th><th>Reset Password</th><th>Activate / Deactivate</th></tr>
+{% for u in rows %}<tr><td><code>{{ u.username }}</code></td><td>{{ u.display_name }}</td>
+<td>{{ role_labels.get(u.role, u.role) }}</td>
+<td>{% if u.is_active %}<span class="pill paid">Active</span>{% else %}<span class="pill pending">Deactivated</span>{% endif %}</td>
+<td><form method="post" action="{{ url_for('admin_staff_reset_password', user_id=u.id) }}" onsubmit="return confirm('Reset password for {{ u.username }}? The new password is shown once.');">
+<input name="new_password" type="password" placeholder="New password (blank = generate)" style="min-width:190px">
+<button class="btn small" type="submit">Reset</button></form></td>
+<td>{% if u.username == 'admin' %}<span class="muted">Primary admin — protected</span>{% else %}
+<form method="post" action="{{ url_for('admin_staff_toggle_active', user_id=u.id) }}" onsubmit="return confirm('{{ 'Deactivate' if u.is_active else 'Activate' }} the login {{ u.username }}?');">
+<button class="btn small {{ 'danger' if u.is_active else 'green' }}" type="submit">{{ 'Deactivate' if u.is_active else 'Activate' }}</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6">No staff logins yet.</td></tr>{% endfor %}</table>
+<p class="muted">A deactivated staff login cannot sign in (the same rule as deactivated faculty). Deactivation is reversible — no data is deleted.</p>
+{% endblock %}

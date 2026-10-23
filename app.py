@@ -1,5 +1,5 @@
 """
-MY CUVAS — Campus Management System (Demo) v0.14
+MY CUVAS — Campus Management System (Demo) v0.15
 Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
   6. Real database layer — PostgreSQL when DATABASE_URL is set (psycopg v3),
      SQLite otherwise (local dev / demo fallback). Idempotent schema + seed.
@@ -106,6 +106,23 @@ Flask + Jinja, server-rendered. Phase 1 steps 1-3 (v0.1) + v0.2 foundation:
      users sheet WITHOUT password hashes, document tables as
      metadata only) plus every stored file blob under files/ and a
      README. Restore is deliberately manual / by a developer.
+ 19. v0.15 staff roles, security & go-live — two office roles join
+     admin / student / faculty: 'accounts' (fee heads, fee plans,
+     vouchers end-to-end, read-only students, the Fee Collection
+     report) and 'coe' (results + grade scale + roll slips, read-only
+     students incl. transcripts, the Results and Attendance reports),
+     enforced per-route by a multi-role role_required and a role-aware
+     admin sidebar; each office gets its own landing dashboard
+     (/accounts, /coe) and the admin manages staff logins on
+     /admin/staff (create / reset / deactivate, primary admin
+     protected). Security: sign-in lockout (5 consecutive failures
+     within 15 minutes locks the username, audited as login_locked),
+     a password policy (8+ chars, a letter and a digit) for
+     interactively-set passwords, security headers on every response,
+     a 10 MB upload cap with a friendly 413, and hardened session
+     cookies (HttpOnly, SameSite=Lax, Secure when deployed).
+     Go-live: the homepage demo-accounts box is controlled by the
+     show_demo_accounts setting, toggled from the Backup page.
 
 ALL seed data is fictional / demo-only. No real people's data.
 Run:  python app.py   (or: flask --app app run)
@@ -139,6 +156,37 @@ else:
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "demo-only-secret-change-me")
+
+# --- v0.15 security hardening -------------------------------------------
+# Upload cap: any request body over 10 MB is refused with a friendly 413
+# (see the error handler below) instead of being read into memory / DB.
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+# Session cookies: HttpOnly + SameSite=Lax everywhere; Secure only in the
+# deployed configuration (DATABASE_URL set — production runs over HTTPS),
+# so plain-HTTP local testing keeps working.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+if PG:
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+
+@app.after_request
+def _security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
+
+
+@app.errorhandler(413)
+def _upload_too_large(_err):
+    return ("""<!doctype html><html><head><title>Upload too large</title></head>
+<body style="font-family:sans-serif;margin:3em">
+<h1>Upload too large</h1>
+<p>The maximum upload size is <strong>10 MB</strong>. Please choose a
+smaller file and try again.</p>
+<p><a href="/">← Back to the home page</a></p>
+</body></html>""", 413)
 
 # ------------------------------------------------------- data-access layer
 # One thin wrapper over sqlite3 / psycopg v3 so the rest of the app writes a
@@ -424,6 +472,12 @@ DDL = [
     f"""CREATE TABLE IF NOT EXISTS audit_log (
         id {_PK}, user_id INTEGER, username TEXT, role TEXT,
         action TEXT, details TEXT, created_at TEXT)""",
+    # --- v0.15 sign-in lockout (new table only; one row per sign-in
+    # attempt, success flag included, so the lockout helper can count
+    # consecutive failures since the last success) ---
+    f"""CREATE TABLE IF NOT EXISTS login_attempts (
+        id {_PK}, username TEXT, success INTEGER DEFAULT 0,
+        attempted_at TEXT)""",
 ]
 
 # Columns added in v0.2 to tables that may already exist from v0.1.
@@ -478,6 +532,8 @@ def init_db():
     for table, cols in EXTRA_COLUMNS.items():
         ensure_columns(db, table, cols)
     db.commit()
+    migrate_v15_roles(db)
+    db.commit()
     seed(db)
     backfill_v03(db)
     backfill_v04(db)
@@ -488,6 +544,7 @@ def init_db():
     backfill_v11(db)
     backfill_v12(db)
     backfill_v13(db)
+    backfill_v15(db)
     db.commit()
     db.conn.close()
 
@@ -844,6 +901,84 @@ def backfill_v13(db):
              demo_faculty_id if advisor == "demo" else None, 1, _now()))
 
 
+# ------------------------------------------------- v0.15 staff roles migration
+def migrate_v15_roles(db):
+    """v0.15 widening of users.role for the 'accounts' / 'coe' staff
+    roles. Fresh databases are unaffected (the DDL never constrained
+    role), but very old databases can carry a restrictive CHECK:
+      * SQLite: a legacy table may have CHECK(role IN ('admin','student'))
+        baked into its CREATE TABLE — SQLite cannot drop a constraint,
+        so the table is rebuilt without it (every column and row is
+        preserved via an explicit column list).
+      * PostgreSQL: any CHECK constraint on users whose definition
+        mentions role but not the new roles is dropped by name.
+    Runs BEFORE seed/backfills so their inserts of newer roles (the
+    v0.7 faculty login, the v0.15 staff logins) can never trip a
+    legacy constraint. A strict no-op when no restrictive CHECK is
+    found, and on any unexpected shape the table is left untouched."""
+    if PG:
+        rows = db.execute(
+            """SELECT con.conname name, pg_get_constraintdef(con.oid) def
+               FROM pg_constraint con
+               JOIN pg_class rel ON rel.oid = con.conrelid
+               WHERE rel.relname='users' AND con.contype='c'""").fetchall()
+        for r in rows:
+            if "role" in r["def"] and "accounts" not in r["def"]:
+                db.execute(
+                    f'ALTER TABLE users DROP CONSTRAINT "{r["name"]}"')
+        return
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone()
+    sql = (row["sql"] if row else "") or ""
+    if "CHECK" not in sql.upper() or "accounts" in sql:
+        return
+    new_sql = re.sub(r",?\s*CHECK\s*\(\s*role\s+IN\s*\([^)]*\)\s*\)",
+                     "", sql, flags=re.I)
+    if new_sql == sql or "CHECK" in new_sql.upper() and "role" in new_sql:
+        return  # unknown CHECK shape — leave the table exactly as it is
+    new_sql = new_sql.replace("CREATE TABLE users",
+                              "CREATE TABLE users_v15_new", 1)
+    if "users_v15_new" not in new_sql:
+        return  # unexpected CREATE TABLE shape — leave things untouched
+    new_sql = new_sql.replace(", )", ")").replace("( ,", "(")
+    cols = [r["name"] for r in
+            db.execute("PRAGMA table_info(users)").fetchall()]
+    collist = ", ".join(cols)
+    db.execute("ALTER TABLE users RENAME TO users_v15_old")
+    db.execute(new_sql)
+    db.execute(f"INSERT INTO users_v15_new ({collist}) "
+               f"SELECT {collist} FROM users_v15_old")
+    db.execute("DROP TABLE users_v15_old")
+    db.execute("ALTER TABLE users_v15_new RENAME TO users")
+
+
+# ------------------------------------------------------- v0.15 staff seed
+DEMO_STAFF = [
+    ("accounts", "Accounts@123", "accounts", "Demo Accounts Officer"),
+    ("coe", "Coe@123", "coe", "Demo Controller of Examinations"),
+]
+
+
+def backfill_v15(db):
+    """Idempotent v0.15 seed: the two demo staff logins, created ONLY
+    while each username is absent — a renamed / re-passworded /
+    deactivated staff account is never resurrected or overwritten —
+    and the go-live homepage setting show_demo_accounts='1', written
+    ONLY while the key is absent so an admin's toggle survives
+    reboots."""
+    for username, pw, role, name in DEMO_STAFF:
+        if not db.execute("SELECT id FROM users WHERE username=?",
+                          (username,)).fetchone():
+            db.insert(
+                """INSERT INTO users (username,password_hash,role,
+                   display_name) VALUES (?,?,?,?)""",
+                (username, generate_password_hash(pw), role, name))
+    if get_setting(db, "show_demo_accounts") is None:
+        db.execute("INSERT INTO app_settings (key,value) VALUES (?,?)",
+                   ("show_demo_accounts", "1"))
+
+
 def _today():
     return datetime.date.today().isoformat()
 
@@ -1016,13 +1151,18 @@ def login_required(view):
     return wrapped
 
 
-def role_required(role):
+def role_required(*roles):
+    """Gate a view to one or more roles. v0.15 generalised this from a
+    single role to a set, so office roles can share the admin route
+    tree per the Step 20 permission map; every pre-v0.15 call site
+    passes exactly one role and behaves exactly as before. Denial is
+    the house style: a flash + a redirect to the user's own home."""
     def deco(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
             if not session.get("user_id"):
                 return redirect(url_for("login", next=request.path))
-            if session.get("role") != role:
+            if session.get("role") not in roles:
                 flash("You do not have access to that area.", "error")
                 return redirect(url_for(home_for_role()))
             return view(*args, **kwargs)
@@ -1032,6 +1172,8 @@ def role_required(role):
 
 def home_for_role():
     return {"admin": "admin_dashboard",
+            "accounts": "accounts_dashboard",
+            "coe": "coe_dashboard",
             "faculty": "faculty_dashboard"}.get(session.get("role"),
                                                 "student_dashboard")
 
@@ -1077,6 +1219,46 @@ def log_audit(action, details="", username=None, role=None, user_id=None):
 
 
 # ---------------------------------------------------------------- routes: public / auth
+# ------------------------------------------------- sign-in lockout (v0.15)
+LOGIN_MAX_FAILURES = 5        # consecutive failures that trigger a lock
+LOGIN_LOCKOUT_MINUTES = 15    # window those failures must fall within
+
+
+def _record_login_attempt(db, username, success):
+    """One login_attempts row per sign-in attempt. House-safe like
+    log_audit: it never raises into the sign-in flow."""
+    try:
+        db.execute(
+            "INSERT INTO login_attempts (username,success,attempted_at) "
+            "VALUES (?,?,?)", (username, 1 if success else 0, _now()))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _login_failure_streak(db, username):
+    """Consecutive failed attempts for username inside the lockout
+    window, counting back from the newest attempt and stopping at the
+    most recent success (so a successful sign-in clears the streak)."""
+    cutoff = (datetime.datetime.now()
+              - datetime.timedelta(
+                  minutes=LOGIN_LOCKOUT_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = db.execute(
+        """SELECT success FROM login_attempts
+           WHERE username=? AND attempted_at>=? ORDER BY id DESC""",
+        (username, cutoff)).fetchall()
+    streak = 0
+    for r in rows:
+        if r["success"]:
+            break
+        streak += 1
+    return streak
+
+
+def _login_locked(db, username):
+    return _login_failure_streak(db, username) >= LOGIN_MAX_FAILURES
+
+
 @app.route("/")
 def landing():
     db = get_db()
@@ -1084,7 +1266,10 @@ def landing():
         """SELECT * FROM notifications
            WHERE COALESCE(is_published,1)=1 AND COALESCE(audience,'All') IN ('All','Students')
            ORDER BY published_at DESC, id DESC LIMIT 3""").fetchall()
-    return render_template("landing.html", news=news)
+    # v0.15 go-live: the demo-accounts box on the public homepage is
+    # shown only while the admin leaves show_demo_accounts on.
+    show_demo = get_setting(db, "show_demo_accounts", "1") == "1"
+    return render_template("landing.html", news=news, show_demo=show_demo)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1094,6 +1279,20 @@ def login():
         password = request.form.get("password", "")
         db = get_db()
         user = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        if _login_locked(db, username):
+            # locked: refuse WITHOUT checking the password, so even
+            # the correct password is turned away until the window
+            # of consecutive failures ages out.
+            log_audit("login_locked",
+                      f"Sign-in refused for '{username}': temporarily "
+                      f"locked after {LOGIN_MAX_FAILURES} failed attempts",
+                      username=username,
+                      role=(user["role"] if user else ""),
+                      user_id=(user["id"] if user else None))
+            flash(f"Too many failed sign-in attempts for '{username}'. "
+                  f"This account is locked — please try again in "
+                  f"{LOGIN_LOCKOUT_MINUTES} minutes.", "error")
+            return render_template("login.html")
         ok = bool(user and user.get("is_active", 1)
                   and check_password_hash(user["password_hash"], password))
         if ok and user["role"] == "faculty":
@@ -1103,6 +1302,7 @@ def login():
                              (user.get("faculty_id"),)).fetchone()
             ok = bool(fac and fac.get("is_active", 1))
         if ok:
+            _record_login_attempt(db, username, True)
             session.clear()
             session.update(user_id=user["id"], role=user["role"],
                            display_name=user["display_name"],
@@ -1112,6 +1312,7 @@ def login():
                       username=user["username"], role=user["role"],
                       user_id=user["id"])
             return redirect(url_for(home_for_role()))
+        _record_login_attempt(db, username, False)
         log_audit("login_failed", "Failed sign-in attempt",
                   username=username,
                   role=(user["role"] if user else ""),
@@ -1146,6 +1347,51 @@ def admin_dashboard():
         "SELECT v.*, s.name student_name FROM vouchers v JOIN students s ON s.id=v.student_id WHERE v.status IN ('Pending','Proof Submitted') ORDER BY v.id DESC").fetchall()
     return render_template("admin_dashboard.html", kpis=kpis,
                            recent_students=recent_students, pending=pending)
+
+
+# ------------------------------------------------- staff office landings (v0.15)
+@app.route("/accounts")
+@role_required("admin", "accounts")
+def accounts_dashboard():
+    """Accounts Office landing: fee KPIs for the current session from
+    the SAME _fee_report computation as the Fee Collection report,
+    plus the live proof queue size."""
+    db = get_db()
+    sess = current_session(db)
+    rep = _fee_report(db, sess)
+    pending_vouchers = db.execute(
+        "SELECT COUNT(*) c FROM vouchers WHERE status='Pending'"
+    ).fetchone()["c"]
+    return render_template("accounts_dashboard.html", sess=sess, rep=rep,
+                           pending_vouchers=pending_vouchers)
+
+
+@app.route("/coe")
+@role_required("admin", "coe")
+def coe_dashboard():
+    """Controller of Examinations landing: results KPIs — how many
+    result rows exist, how many course result SETS are fully
+    published (via the same _result_set_state the marks sheet uses),
+    and the student count."""
+    db = get_db()
+    total_results = db.execute(
+        "SELECT COUNT(*) c FROM results").fetchone()["c"]
+    groups = db.execute(
+        """SELECT DISTINCT course_id, semester_no, session_id
+           FROM results""").fetchall()
+    published_sets = 0
+    for gr in groups:
+        state, _pub, _tot = _result_set_state(
+            db, gr["course_id"], gr["semester_no"], gr["session_id"])
+        if state == "Published":
+            published_sets += 1
+    students = db.execute(
+        "SELECT COUNT(*) c FROM students").fetchone()["c"]
+    return render_template("coe_dashboard.html",
+                           total_results=total_results,
+                           total_sets=len(groups),
+                           published_sets=published_sets,
+                           students=students)
 
 
 # ---------------------------------------------------------------- helpers: admin CRUD
@@ -1587,8 +1833,40 @@ def _header_map(header_row):
 
 
 def generate_password():
-    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
-    return "Cuvas-" + "".join(secrets.choice(alphabet) for _ in range(8))
+    """A system-generated initial password. Always satisfies the v0.15
+    password policy (at least one letter and one digit), even though
+    generated passwords are exempt from it — belt and braces."""
+    letters = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"
+    digits = "23456789"
+    alphabet = letters + digits
+    body = "".join(secrets.choice(alphabet) for _ in range(8))
+    if not any(c.isdigit() for c in body):
+        pos = secrets.randbelow(len(body))
+        body = body[:pos] + secrets.choice(digits) + body[pos + 1:]
+    if not any(c.isalpha() for c in body):
+        pos = secrets.randbelow(len(body))
+        body = body[:pos] + secrets.choice(letters) + body[pos + 1:]
+    return "Cuvas-" + body
+
+
+# ------------------------------------------------- password policy (v0.15)
+PASSWORD_MIN_LENGTH = 8
+
+
+def password_policy_error(pw):
+    """None when pw satisfies the interactively-set password policy
+    (minimum 8 characters, at least one letter and one digit), else a
+    friendly reason. Applied ONLY where a human types a password into
+    an admin form; system-generated / imported initial passwords are
+    exempt (generate_password above is policy-compliant anyway)."""
+    if not pw or len(pw) < PASSWORD_MIN_LENGTH:
+        return (f"Password is too short — use at least "
+                f"{PASSWORD_MIN_LENGTH} characters.")
+    if not any(c.isalpha() for c in pw):
+        return "Password must contain at least one letter."
+    if not any(c.isdigit() for c in pw):
+        return "Password must contain at least one digit."
+    return None
 
 
 def create_student(db, data, password=None):
@@ -1652,7 +1930,7 @@ def _student_filter_sql(args):
 
 
 @app.route("/admin/students")
-@role_required("admin")
+@role_required("admin", "accounts", "coe")
 def admin_students():
     db = get_db()
     where, params = _student_filter_sql(request.args)
@@ -1709,6 +1987,14 @@ def admin_student_new():
     if request.method == "POST":
         data = _student_data_from_form(request.form)
         chosen_pw = request.form.get("initial_password", "").strip() or None
+        pw_err = password_policy_error(chosen_pw) if chosen_pw else None
+        if pw_err:
+            # v0.15 policy: a hand-typed initial password must comply;
+            # leaving it blank auto-generates a compliant one instead.
+            flash(f"Could not add student: {pw_err} Leave the initial "
+                  f"password blank to auto-generate one.", "error")
+            return render_template("student_form.html",
+                                   **_student_form_values(db))
         try:
             sid, pw = create_student(db, data, password=chosen_pw)
             db.commit()
@@ -1805,7 +2091,15 @@ def admin_student_reset_password(student_id):
     if not student:
         flash("Student not found.", "error")
         return redirect(url_for("admin_students"))
-    pw = generate_password()
+    chosen_pw = request.form.get("new_password", "").strip()
+    if chosen_pw:
+        pw_err = password_policy_error(chosen_pw)
+        if pw_err:
+            flash(f"Could not reset password: {pw_err}", "error")
+            return redirect(url_for("admin_students"))
+        pw = chosen_pw
+    else:
+        pw = generate_password()
     db.execute("UPDATE users SET password_hash=? WHERE student_id=?",
                (generate_password_hash(pw), student_id))
     db.commit()
@@ -1920,6 +2214,13 @@ def admin_faculty_new():
     if request.method == "POST":
         data = _faculty_data_from_form(request.form)
         chosen_pw = request.form.get("initial_password", "").strip() or None
+        pw_err = password_policy_error(chosen_pw) if chosen_pw else None
+        if pw_err:
+            # v0.15 policy: same rule as student create.
+            flash(f"Could not add faculty member: {pw_err} Leave the "
+                  f"initial password blank to auto-generate one.", "error")
+            return render_template("faculty_form.html",
+                                   **_faculty_form_values(db))
         try:
             fid, pw = create_faculty(db, data, password=chosen_pw)
             db.commit()
@@ -1991,7 +2292,15 @@ def admin_faculty_reset_password(faculty_id):
     fac = _get_faculty_or_redirect(db, faculty_id)
     if not fac:
         return redirect(url_for("admin_faculty"))
-    pw = generate_password()
+    chosen_pw = request.form.get("new_password", "").strip()
+    if chosen_pw:
+        pw_err = password_policy_error(chosen_pw)
+        if pw_err:
+            flash(f"Could not reset password: {pw_err}", "error")
+            return redirect(url_for("admin_faculty_edit", faculty_id=faculty_id))
+        pw = chosen_pw
+    else:
+        pw = generate_password()
     db.execute("UPDATE users SET password_hash=? WHERE faculty_id=?",
                (generate_password_hash(pw), faculty_id))
     db.commit()
@@ -2202,7 +2511,7 @@ def admin_students_import():
 
 
 @app.route("/admin/students/export.xlsx")
-@role_required("admin")
+@role_required("admin", "accounts", "coe")
 def admin_students_export():
     db = get_db()
     where, params = _student_filter_sql(request.args)
@@ -2345,7 +2654,9 @@ def student_dashboard():
 #   * verification is guarded so a voucher can be credited exactly once.
 VOUCHER_STATUSES = ["Pending", "Proof Submitted", "Paid", "Split into Installments"]
 PAYMENT_CHANNELS = ["Bank", "Mobile Wallet", "RAAST"]
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # proof uploads
+# (The request-size cap lives with the v0.15 hardening config near the
+# top of this file: MAX_CONTENT_LENGTH = 10 MB for every upload,
+# proof uploads included — per-file rules still apply on top of it.)
 
 
 def next_challan_no(db):
@@ -2530,7 +2841,7 @@ def _add_days(date_str, days):
 
 # ---------------------------------------------------------------- fee heads (admin)
 @app.route("/admin/fee-heads")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_heads():
     rows = get_db().execute(
         """SELECT h.*, (SELECT COUNT(*) FROM fee_plan_lines l WHERE l.head_id=h.id) use_count
@@ -2539,7 +2850,7 @@ def admin_fee_heads():
 
 
 @app.route("/admin/fee-heads/new", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_head_new():
     db = get_db()
     name = request.form.get("name", "").strip()
@@ -2556,7 +2867,7 @@ def admin_fee_head_new():
 
 
 @app.route("/admin/fee-heads/<int:head_id>/edit", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_head_edit(head_id):
     db = get_db()
     head = db.execute("SELECT * FROM fee_heads WHERE id=?", (head_id,)).fetchone()
@@ -2581,7 +2892,7 @@ def admin_fee_head_edit(head_id):
 
 
 @app.route("/admin/fee-heads/<int:head_id>/delete", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_head_delete(head_id):
     db = get_db()
     head = db.execute("SELECT * FROM fee_heads WHERE id=?", (head_id,)).fetchone()
@@ -2603,7 +2914,7 @@ def admin_fee_head_delete(head_id):
 
 # ---------------------------------------------------------------- fee plans (admin)
 @app.route("/admin/fee-plans")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_plans():
     rows = get_db().execute(
         """SELECT fp.*, p.name prog_name, ss.name sess_name,
@@ -2661,7 +2972,7 @@ def _save_fee_plan(db, plan_id, form):
 
 
 @app.route("/admin/fee-plans/new", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_plan_new():
     db = get_db()
     if request.method == "POST":
@@ -2676,7 +2987,7 @@ def admin_fee_plan_new():
 
 
 @app.route("/admin/fee-plans/<int:plan_id>/edit", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_plan_edit(plan_id):
     db = get_db()
     plan = db.execute("SELECT * FROM fee_plans WHERE id=?", (plan_id,)).fetchone()
@@ -2694,7 +3005,7 @@ def admin_fee_plan_edit(plan_id):
 
 
 @app.route("/admin/fee-plans/<int:plan_id>/delete", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_fee_plan_delete(plan_id):
     db = get_db()
     plan = db.execute("SELECT * FROM fee_plans WHERE id=?", (plan_id,)).fetchone()
@@ -2739,7 +3050,7 @@ def _voucher_filter_sql(args):
 
 
 @app.route("/admin/vouchers")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_vouchers():
     db = get_db()
     where, params = _voucher_filter_sql(request.args)
@@ -2789,7 +3100,7 @@ def create_plan_voucher(db, plan, student, due_date):
 
 
 @app.route("/admin/vouchers/generate", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_generate():
     db = get_db()
     plans = db.execute(
@@ -2833,7 +3144,7 @@ def admin_voucher_generate():
 
 
 @app.route("/admin/vouchers/<int:voucher_id>")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_detail(voucher_id):
     db = get_db()
     v = get_voucher(db, voucher_id)
@@ -2852,7 +3163,7 @@ def admin_voucher_detail(voucher_id):
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/challan.pdf")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_challan(voucher_id):
     db = get_db()
     v = get_voucher(db, voucher_id)
@@ -2864,7 +3175,7 @@ def admin_voucher_challan(voucher_id):
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/proof")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_proof(voucher_id):
     db = get_db()
     v = db.execute("SELECT * FROM vouchers WHERE id=?", (voucher_id,)).fetchone()
@@ -2876,7 +3187,7 @@ def admin_voucher_proof(voucher_id):
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/verify", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_verify(voucher_id):
     db = get_db()
     v = get_voucher(db, voucher_id)
@@ -2911,7 +3222,7 @@ def admin_voucher_verify(voucher_id):
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/reject", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_reject(voucher_id):
     db = get_db()
     v = get_voucher(db, voucher_id)
@@ -2931,7 +3242,7 @@ def admin_voucher_reject(voucher_id):
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/installments", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_voucher_installments(voucher_id):
     db = get_db()
     v = get_voucher(db, voucher_id)
@@ -3209,7 +3520,7 @@ def _parse_marks(raw):
 
 # ---------------------------------------------------------------- grade scale (admin)
 @app.route("/admin/grade-scale", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_grade_scale():
     db = get_db()
     if request.method == "POST":
@@ -3256,7 +3567,7 @@ def admin_grade_scale():
 
 
 @app.route("/admin/grade-scale/add", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_grade_scale_add():
     db = get_db()
     try:
@@ -3280,7 +3591,7 @@ def admin_grade_scale_add():
 
 
 @app.route("/admin/grade-scale/<int:band_id>/delete", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_grade_scale_delete(band_id):
     db = get_db()
     band = db.execute("SELECT * FROM grade_bands WHERE id=?", (band_id,)).fetchone()
@@ -3307,7 +3618,7 @@ def _result_ctx(db):
 
 
 @app.route("/admin/results")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_results():
     db = get_db()
     course, program_id, session_id, semester_no = _result_ctx(db)
@@ -3357,7 +3668,7 @@ def _sheet_args(db):
 
 
 @app.route("/admin/results/sheet", methods=["GET", "POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_results_sheet():
     db = get_db()
     ctx = _sheet_args(db)
@@ -3422,7 +3733,7 @@ def admin_results_sheet():
 
 
 @app.route("/admin/results/sheet/publish", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_results_publish():
     db = get_db()
     ctx = _sheet_args(db)
@@ -3446,7 +3757,7 @@ def admin_results_publish():
 
 
 @app.route("/admin/results/sheet.xlsx")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_results_sheet_xlsx():
     db = get_db()
     ctx = _sheet_args(db)
@@ -3480,7 +3791,7 @@ MARKS_ALIASES = {
 
 
 @app.route("/admin/results/import", methods=["POST"])
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_results_import():
     db = get_db()
     ctx = _sheet_args(db)
@@ -3668,7 +3979,7 @@ def student_transcript_pdf():
 
 
 @app.route("/admin/students/<int:student_id>/transcript.pdf")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_student_transcript_pdf(student_id):
     db = get_db()
     student = student_full(db, student_id)
@@ -3790,7 +4101,7 @@ def student_slip_pdf():
 
 
 @app.route("/admin/students/<int:student_id>/slip.pdf")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_student_slip_pdf(student_id):
     db = get_db()
     student = student_full(db, student_id)
@@ -3803,7 +4114,7 @@ def admin_student_slip_pdf(student_id):
 
 
 @app.route("/admin/slips.pdf")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_slips_bulk_pdf():
     db = get_db()
     program_id = _int_or_none(request.args.get("program_id"))
@@ -7566,7 +7877,7 @@ def _fee_report(db, sess):
 
 
 @app.route("/admin/reports")
-@role_required("admin")
+@role_required("admin", "accounts", "coe")
 def admin_reports():
     db = get_db()
     last_backup = db.execute(
@@ -7581,7 +7892,7 @@ def admin_reports():
 
 
 @app.route("/admin/reports/fees")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_report_fees():
     db = get_db()
     sess = _report_session(db)
@@ -7592,7 +7903,7 @@ def admin_report_fees():
 
 
 @app.route("/admin/reports/fees.xlsx")
-@role_required("admin")
+@role_required("admin", "accounts")
 def admin_report_fees_xlsx():
     db = get_db()
     sess = _report_session(db)
@@ -7742,7 +8053,7 @@ def _results_report(db, sess):
 
 
 @app.route("/admin/reports/results")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_report_results():
     db = get_db()
     sess = _report_session(db)
@@ -7753,7 +8064,7 @@ def admin_report_results():
 
 
 @app.route("/admin/reports/results.xlsx")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_report_results_xlsx():
     db = get_db()
     sess = _report_session(db)
@@ -7803,7 +8114,7 @@ def _attendance_report(db, sess):
 
 
 @app.route("/admin/reports/attendance")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_report_attendance():
     db = get_db()
     sess = _report_session(db)
@@ -7814,7 +8125,7 @@ def admin_report_attendance():
 
 
 @app.route("/admin/reports/attendance.xlsx")
-@role_required("admin")
+@role_required("admin", "coe")
 def admin_report_attendance_xlsx():
     db = get_db()
     sess = _report_session(db)
@@ -7903,7 +8214,7 @@ BACKUP_SHEETS = [
     ("societies", "societies"), ("society_members", "society_members"),
     ("vehicle_passes", "vehicle_passes"),
     ("app_settings", "app_settings"), ("counters", "counters"),
-    ("audit_log", "audit_log"),
+    ("audit_log", "audit_log"), ("login_attempts", "login_attempts"),
 ]
 # Columns never written to a backup: password hashes (never exportable)
 # and stored file bytes (the files themselves travel under files/).
@@ -7955,6 +8266,124 @@ def _backup_files(db):
     return out
 
 
+# ------------------------------------------------- staff management (v0.15)
+STAFF_ROLES = ("accounts", "coe")
+STAFF_ROLE_LABELS = {"admin": "Admin",
+                     "accounts": "Accounts Office",
+                     "coe": "Controller of Examinations"}
+
+
+def _staff_user_or_none(db, user_id):
+    row = db.execute(
+        "SELECT * FROM users WHERE id=? AND role IN ('admin','accounts','coe')",
+        (user_id,)).fetchone()
+    return row
+
+
+@app.route("/admin/staff", methods=["GET", "POST"])
+@role_required("admin")
+def admin_staff():
+    """Admin-only management of the staff logins (admin / accounts /
+    coe): create office logins, reset their passwords, and
+    activate / deactivate them. The primary 'admin' account can
+    never be deactivated."""
+    db = get_db()
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        display_name = request.form.get("display_name", "").strip()
+        role = request.form.get("role", "").strip()
+        password = (request.form.get("password") or "").strip()
+        if not username or not display_name:
+            flash("Username and display name are required.", "error")
+        elif role not in STAFF_ROLES:
+            flash("Choose a staff role (Accounts Office or Controller "
+                  "of Examinations).", "error")
+        elif db.execute("SELECT id FROM users WHERE username=?",
+                        (username,)).fetchone():
+            flash(f"A login with username '{username}' already exists.",
+                  "error")
+        else:
+            pw_err = password_policy_error(password)
+            if pw_err:
+                flash(f"Could not create staff login: {pw_err}", "error")
+            else:
+                db.insert(
+                    """INSERT INTO users (username,password_hash,role,
+                       display_name) VALUES (?,?,?,?)""",
+                    (username, generate_password_hash(password), role,
+                     display_name))
+                db.commit()
+                log_audit("staff_created",
+                          f"Staff login '{username}' "
+                          f"({STAFF_ROLE_LABELS[role]}) for {display_name}")
+                flash(f"Staff login '{username}' created for "
+                      f"{display_name} ({STAFF_ROLE_LABELS[role]}). "
+                      f"Password: {password} — shown ONCE, note it now.",
+                      "ok")
+                return redirect(url_for("admin_staff"))
+    rows = db.execute(
+        """SELECT * FROM users WHERE role IN ('admin','accounts','coe')
+           ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'accounts' THEN 1
+           ELSE 2 END, username""").fetchall()
+    return render_template("admin_staff.html", rows=rows,
+                           staff_roles=STAFF_ROLES,
+                           role_labels=STAFF_ROLE_LABELS)
+
+
+@app.route("/admin/staff/<int:user_id>/reset-password", methods=["POST"])
+@role_required("admin")
+def admin_staff_reset_password(user_id):
+    db = get_db()
+    user = _staff_user_or_none(db, user_id)
+    if not user:
+        flash("Staff login not found.", "error")
+        return redirect(url_for("admin_staff"))
+    chosen_pw = request.form.get("new_password", "").strip()
+    if chosen_pw:
+        pw_err = password_policy_error(chosen_pw)
+        if pw_err:
+            flash(f"Could not reset password: {pw_err}", "error")
+            return redirect(url_for("admin_staff"))
+        pw = chosen_pw
+    else:
+        pw = generate_password()
+    db.execute("UPDATE users SET password_hash=? WHERE id=?",
+               (generate_password_hash(pw), user_id))
+    db.commit()
+    log_audit("staff_password_reset",
+              f"Password reset for staff login '{user['username']}'")
+    flash(f"Password reset for '{user['username']}' "
+          f"({user['display_name']}). New password: {pw} — shown ONCE, "
+          f"note it now.", "ok")
+    return redirect(url_for("admin_staff"))
+
+
+@app.route("/admin/staff/<int:user_id>/toggle-active", methods=["POST"])
+@role_required("admin")
+def admin_staff_toggle_active(user_id):
+    db = get_db()
+    user = _staff_user_or_none(db, user_id)
+    if not user:
+        flash("Staff login not found.", "error")
+        return redirect(url_for("admin_staff"))
+    if user["username"] == "admin":
+        flash("The primary admin account cannot be deactivated.", "error")
+        return redirect(url_for("admin_staff"))
+    if user["id"] == session.get("user_id"):
+        flash("You cannot deactivate your own login.", "error")
+        return redirect(url_for("admin_staff"))
+    new_state = 0 if user.get("is_active", 1) else 1
+    db.execute("UPDATE users SET is_active=? WHERE id=?",
+               (new_state, user_id))
+    db.commit()
+    log_audit("staff_activated" if new_state else "staff_deactivated",
+              f"Staff login '{user['username']}' "
+              f"({STAFF_ROLE_LABELS.get(user['role'], user['role'])})")
+    flash(f"Staff login '{user['username']}' "
+          f"{'activated' if new_state else 'deactivated'}.", "ok")
+    return redirect(url_for("admin_staff"))
+
+
 @app.route("/admin/backup")
 @role_required("admin")
 def admin_backup():
@@ -7962,8 +8391,27 @@ def admin_backup():
     last = db.execute(
         "SELECT * FROM audit_log WHERE action='backup_downloaded' "
         "ORDER BY id DESC LIMIT 1").fetchone()
-    return render_template("admin_backup.html",
-                           last_backup=last, generated=_now())
+    return render_template(
+        "admin_backup.html", last_backup=last, generated=_now(),
+        show_demo_accounts=get_setting(db, "show_demo_accounts", "1"))
+
+
+@app.route("/admin/backup/demo-accounts", methods=["POST"])
+@role_required("admin")
+def admin_backup_demo_toggle():
+    """Go-Live toggle: show / hide the demo-accounts box (with the
+    demo passwords) on the PUBLIC homepage."""
+    db = get_db()
+    show = "1" if request.form.get("show_demo_accounts") else "0"
+    set_setting(db, "show_demo_accounts", show)
+    db.commit()
+    log_audit("demo_accounts_toggled",
+              "Homepage demo accounts box "
+              + ("shown" if show == "1" else "hidden"))
+    flash("Homepage demo accounts box is now "
+          + ("SHOWN — remember to hide it at go-live."
+             if show == "1" else "hidden."), "ok")
+    return redirect(url_for("admin_backup"))
 
 
 @app.route("/admin/backup/download")

@@ -1,4 +1,4 @@
-# MY CUVAS — Campus Management System (Demo) v0.14
+# MY CUVAS — Campus Management System (Demo) v0.15
 
 Flask + Jinja, server-rendered. Original design (not a copy of any other portal).
 Scope so far: Phase 1 steps 1–3 (v0.1 skeleton, auth/roles, dashboards), the
@@ -41,7 +41,14 @@ an Excel export), an append-only **audit log** of sign-ins and
 significant actions across all portals, and a one-click **full
 backup** download (Excel workbook + stored files ZIP; passwords
 never included; restore deliberately manual) — see the v0.14
-section below.
+section below. **Step 20 (v0.15)** — the final roadmap step — adds
+the two office roles (**Accounts** and **Controller of
+Examinations**) with per-route permissions, role-aware menus and
+their own landing dashboards, admin-managed staff logins, and the
+security pass: sign-in lockout, a password policy, security
+headers, a 10 MB upload cap, hardened session cookies, and a
+go-live switch that hides the demo accounts from the public
+homepage — see the v0.15 section below.
 (The v0.5 navy redesign was rolled back at the user's request; the UI is
 still the original v0.4 green/teal+gold theme.)
 
@@ -77,6 +84,12 @@ Against PostgreSQL instead: `DATABASE_URL=postgresql://… .venv/bin/python app.
 | Admin   | `admin`   | `Admin@123`   |
 | Student | `student` | `Student@123` |
 | Faculty | `faculty` | `Faculty@123` |
+| Accounts Office | `accounts` | `Accounts@123` |
+| Controller of Examinations | `coe` | `Coe@123` |
+
+The Accounts and COE demo logins (v0.15) are restricted office
+roles — see the permission map in the v0.15 section. Real staff
+logins are created by the admin on `/admin/staff`.
 
 The demo faculty account belongs to the fictional “Demo Teacher”
 (`demo.teacher@cuvas.edu.pk`, Lecturer, Department of Computer Science)
@@ -192,7 +205,18 @@ Werkzeug. All seed data is invented for demonstration — no real people's data.
   - `/admin/audit` — the append-only audit log viewer (text / role /
     date filters, newest first, capped at 300 rows with a note)
   - `/admin/backup` — what the backup contains + the last-backup
-    timestamp, and `/admin/backup/download` — the full ZIP backup
+    timestamp, and `/admin/backup/download` — the full ZIP backup;
+    the same page carries the v0.15 **Go-Live** card that shows /
+    hides the demo-accounts box on the public homepage
+- `/accounts` — the Accounts Office landing dashboard (fee KPIs for
+  the current session + quick links); signing in as `accounts`
+  lands here, and the `/admin/*` pages it may use render with a
+  role-aware sidebar (fees, vouchers, students, reports only)
+- `/coe` — the Controller of Examinations landing dashboard
+  (results KPIs + quick links); signing in as `coe` lands here
+- `/admin/staff` — staff login management (admin only): create
+  Accounts / COE logins, reset their passwords, activate /
+  deactivate them; the primary `admin` account is protected
 - `/admin/fee-heads` — fee head CRUD (delete blocked while a head is used in plan lines)
 - `/admin/fee-plans` — fee plans per program + session + semester, with fee-head line
   items and computed totals; delete blocked once vouchers exist for the plan
@@ -785,6 +809,127 @@ itself is recorded in the audit log. **Restore is deliberately
 out of scope** — manual / by a developer, as the page and the
 README state.
 
+## Staff Roles, Security & Go-Live (Step 20, v0.15)
+
+Two office roles join admin / student / faculty. `users.role` gains
+`accounts` and `coe` (the migration is `migrate_v15_roles`: fresh
+DDL never constrained the column, but a legacy database carrying
+`CHECK(role IN ('admin','student'))` has the constraint widened at
+boot — on SQLite by rebuilding the users table with every column
+and row preserved, on PostgreSQL by dropping the restrictive
+CHECK constraint by name). Demo logins `accounts` / `coe` are
+seeded only while each username is absent (`backfill_v15`), exactly
+like the faculty demo login. Sign-in lands each role on its own
+dashboard (`/accounts`, `/coe`); an office user who opens `/admin`
+is redirected to their own landing; the admin (a superset) may open
+both landings. The sidebar in `admin_base.html` is role-aware: each
+role sees only the modules it may open, while the admin's link set
+is unchanged (plus the new Staff link).
+
+### Permission map (route group → roles)
+
+| Route group | Admin | Accounts | COE |
+|---|---|---|---|
+| Fee heads + fee plans (full CRUD) | ✓ | ✓ | — |
+| Vouchers: list, generate (single + bulk), detail, challan PDF, proof view, verify, reject, split | ✓ | ✓ | — |
+| Students list + Excel export (read-only for the offices) | ✓ | ✓ | ✓ |
+| Student transcript PDF | ✓ | — | ✓ |
+| Roll-number slips (single + bulk PDF) | ✓ | — | ✓ |
+| Results: marks sheets, save, Excel import/export, publish/unpublish | ✓ | — | ✓ |
+| Grade scale | ✓ | — | ✓ |
+| Reports hub | ✓ | ✓ | ✓ |
+| Fee Collection report (+ Excel) | ✓ | ✓ | — |
+| Results Summary + Attendance Summary reports (+ Excel) | ✓ | — | ✓ |
+| Student Strength report | ✓ | — | — |
+| Student add / edit / delete / import / password reset | ✓ | — | — |
+| Departments / programs / sessions / courses, faculty, attendance desk, clearance, scholarships, repeat approvals, timetable, transport, documents desk, tickets desk, notifications, repository, campus settings, societies, vehicle passes | ✓ | — | — |
+| Audit log, backup, staff management | ✓ | — | — |
+
+Enforcement is per-route (`role_required` now takes a set of
+roles); shared templates hide the actions a role may not use (the
+students list shows no Add / Import / Edit / Reset / Delete
+controls to the offices, and no transcript/slip links to
+Accounts). Denial keeps the house style: a flash + a redirect to
+the user's own home.
+
+### Staff management (`/admin/staff`, admin only)
+
+Lists the staff logins (admin / accounts / coe) with their active
+state. The admin can **create** an office login (username, display
+name, role, password — the password is confirmed once in the
+flash, per the house pattern), **reset** a password (typed or
+auto-generated, shown once), and **deactivate / reactivate** a
+login (a deactivated staff user cannot sign in, the same rule as
+faculty). The primary `admin` account can never be deactivated,
+and nobody can deactivate their own login. Actions are audited:
+`staff_created`, `staff_password_reset`, `staff_deactivated`,
+`staff_activated`.
+
+### Security hardening
+
+- **Sign-in lockout** — every attempt is recorded in
+  `login_attempts`. `LOGIN_MAX_FAILURES = 5` consecutive failures
+  for a username within `LOGIN_LOCKOUT_MINUTES = 15` minutes locks
+  that username: further sign-ins are refused *without checking
+  the password* (even the correct password is turned away) with a
+  clear message, and the refusal is audited as `login_locked`. A
+  successful sign-in clears the streak.
+- **Password policy** — passwords a human types into an admin form
+  must be at least 8 characters with at least one letter and one
+  digit (`password_policy_error`). Enforced on: staff create +
+  reset, and the hand-typed *initial password* on student create
+  and faculty create (plus an optional typed password on the
+  student / faculty reset actions). System-generated and
+  Excel-imported initial passwords are **exempt** — and
+  `generate_password()` output satisfies the policy anyway.
+  Rejection shows a friendly message and creates nothing. (All
+  fixture passwords used by the earlier verify suites —
+  `Test@1234`, `Teach@123`, `Other@12345` — already comply, so no
+  suite needed changing.)
+- **Headers** — every response carries
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`
+  and `Referrer-Policy: same-origin`.
+- **Upload cap** — `MAX_CONTENT_LENGTH = 10 MB` for all uploads,
+  with a friendly 413 page. (This supersedes the v0.3-era 16 MB
+  assignment; the per-file rules — e.g. the 5 MB document cap —
+  still apply on top.)
+- **Cookies** — `SESSION_COOKIE_HTTPONLY = True`,
+  `SESSION_COOKIE_SAMESITE = 'Lax'`, and
+  `SESSION_COOKIE_SECURE = True` only when deployed
+  (`DATABASE_URL` set), so local HTTP testing keeps working.
+- **Known remaining item (documented, not done)** — the forms do
+  not yet carry per-form **CSRF tokens**; SameSite=Lax session
+  cookies are the current mitigation. Adding CSRF tokens to every
+  form is a documented future hardening item.
+
+### Go-Live
+
+The homepage demo-accounts box is controlled by the
+`show_demo_accounts` setting (seeded `1`, never overwritten): the
+public homepage shows the box only while it is on. The admin
+toggles it from the **Go-Live** card on `/admin/backup`
+(audited as `demo_accounts_toggled`).
+
+## Go-Live Checklist
+
+Before real users arrive:
+
+- [ ] **Change ALL demo / default passwords** — `admin` first,
+      then the student, faculty, accounts and coe demo logins (or
+      deactivate the demo logins you no longer need).
+- [ ] **Create the real Accounts and COE staff logins** on
+      `/admin/staff` and deactivate the demo staff accounts
+      (`accounts`, `coe`).
+- [ ] **Turn OFF the demo accounts box** on the public homepage
+      (Backup page → Go-Live card) so no demo passwords are
+      published.
+- [ ] **Set the real LMS / Library / Email links** on the Campus
+      Life settings page (`/admin/campus`).
+- [ ] **Take the first full Backup** (`/admin/backup`) and store
+      the ZIP somewhere safe, off the server.
+- [ ] **Review the audit log weekly** (`/admin/audit`) — sign-ins,
+      failed sign-ins and lockouts included.
+
 ## Verification
 
 `verify_v02.py` runs a 45-check scripted pass (CRUD, student lifecycle, Excel
@@ -1044,9 +1189,41 @@ its data untouched — simulated by dropping `audit_log` from a
 booted database and booting again (table recreated, demo data
 intact, new pages 200).
 
-## Not in v0.14
+`verify_v15.py` adds a 95-check pass over Step 20 (demo staff
+seeded with landing redirects; office users bounced from /admin
+to their own landing; the full permission matrix — accounts
+allowed fees / vouchers / fee report / read-only students and
+refused 28 other areas, coe mirrored with results / grade scale /
+slips / results + attendance reports, admin superset everywhere;
+role-aware sidebars and a role-aware Reports hub; the students
+list renders no mutation controls to the offices; staff create /
+weak-password refusal / typed reset shown once / deactivate →
+sign-in blocked → reactivate, with the primary admin protected
+and every action audited; lockout — 4 failures OK, success clears
+the streak, 5 failures lock even the correct password out with a
+`login_locked` audit row and per-username isolation; the password
+policy on student / faculty create + reset, with Excel import
+exempt; the three security headers, HttpOnly + SameSite=Lax
+cookies and Secure only when deployed; a >10 MB upload refused
+with 413; the demo-accounts toggle hiding and restoring the
+homepage box, audited; a v0.14-shaped database — users table with
+the legacy `CHECK(role IN ('admin','student'))` — booting in a
+subprocess, losing the constraint, and serving accounts / coe
+logins; faculty portal and the 10 student tabs untouched).
+v0.15 result: **all thirteen suites ALL PASS on both backends**
+(SQLite and PostgreSQL identical: 43 + 52 + 60 + 72 + 64 + 52 +
+59 + 52 + 64 + 51 + 60 + 68 + 95 = **792 checks**). Migration
+notes: v0.15 adds ONE table via the boot DDL (`login_attempts`,
+`CREATE TABLE IF NOT EXISTS`); `migrate_v15_roles` widens a
+legacy role CHECK before any seed/backfill insert can trip it
+(verified against the actual stale local demo database: CHECK
+present before boot, gone after, every user row preserved, all
+five roles able to sign in); `backfill_v15` seeds the demo staff
+logins and the `show_demo_accounts` setting only-when-absent.
 
-Posting an approved scholarship award to the fee ledger / vouchers,
-surveys (deferred by the user), backup restore (deliberately
-manual), dept/accounts/COE portals — the rest of Phase 3 (see
-`../architecture.md`).
+## Not in v0.15
+
+Posting an approved scholarship award to the fee ledger /
+vouchers, surveys (deferred by the user), backup restore
+(deliberately manual), per-form CSRF tokens (documented above as
+a future hardening item).

@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block body %}<div class="layout">
-<aside class="sidebar"><a href="{{ url_for('admin_dashboard') }}">🏠 Dashboard</a>
+<aside class="sidebar">{% set role = session.get('role') %}{% if role == 'accounts' %}<a href="{{ url_for('accounts_dashboard') }}">🏠 Dashboard</a>{% elif role == 'coe' %}<a href="{{ url_for('coe_dashboard') }}">🏠 Dashboard</a>{% else %}<a href="{{ url_for('admin_dashboard') }}">🏠 Dashboard</a>{% endif %}
 <a href="{{ url_for('admin_students') }}">🧑‍🎓 Students</a>
-<a href="{{ url_for('admin_faculty') }}">👩‍🏫 Faculty</a>
+{% if role == 'admin' %}<a href="{{ url_for('admin_faculty') }}">👩‍🏫 Faculty</a>
 <a href="{{ url_for('admin_departments') }}">🏛 Departments</a>
 <a href="{{ url_for('admin_programs') }}">🎓 Programs</a>
 <a href="{{ url_for('admin_sessions') }}">🗓 Sessions</a>
 <a href="{{ url_for('admin_courses') }}">📚 Courses</a>
-<a href="{{ url_for('admin_fee_heads') }}">💰 Fee Heads</a>
+{% endif %}{% if role in ('admin', 'accounts') %}<a href="{{ url_for('admin_fee_heads') }}">💰 Fee Heads</a>
 <a href="{{ url_for('admin_fee_plans') }}">🧾 Fee Plans</a>
 <a href="{{ url_for('admin_vouchers') }}">🎫 Vouchers</a>
-<a href="{{ url_for('admin_results') }}">📝 Results</a>
+{% endif %}{% if role in ('admin', 'coe') %}<a href="{{ url_for('admin_results') }}">📝 Results</a>
 <a href="{{ url_for('admin_grade_scale') }}">⚖ Grade Scale</a>
-<a href="{{ url_for('admin_attendance') }}">📅 Attendance</a>
+{% endif %}{% if role == 'admin' %}<a href="{{ url_for('admin_attendance') }}">📅 Attendance</a>
 <a href="{{ url_for('admin_clearance') }}">✅ Clearance</a>
 <a href="{{ url_for('admin_scholarships') }}">🎓 Scholarships</a>
 <a href="{{ url_for('admin_repeat') }}">🔁 Course Repeat</a>
@@ -23,6 +23,7 @@
 <a href="{{ url_for('admin_notifications') }}">📢 Notifications</a>
 <a href="{{ url_for('admin_repository') }}">🗂 Repository</a>
 <a href="{{ url_for('admin_campus') }}">🌐 Campus Life</a>
-<a href="{{ url_for('admin_reports') }}">📊 Reports</a>
-<a href="{{ url_for('logout') }}">🚪 Sign out</a></aside>
+{% endif %}<a href="{{ url_for('admin_reports') }}">📊 Reports</a>
+{% if role == 'admin' %}<a href="{{ url_for('admin_staff') }}">👥 Staff</a>
+{% endif %}<a href="{{ url_for('logout') }}">🚪 Sign out</a></aside>
 <main class="main">{% block admin_body %}{% endblock %}</main></div>{% endblock %}

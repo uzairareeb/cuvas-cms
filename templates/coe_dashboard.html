@@ -1,0 +1,25 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Controller of Examinations Dashboard</h2>
+<p class="muted">Welcome, {{ session.display_name }} — examinations at a glance.</p>
+<div class="grid">
+<div class="card kpi"><div class="num">{{ total_results }}</div><div class="lbl">Results Recorded</div></div>
+<div class="card kpi teal"><div class="num">{{ published_sets }} / {{ total_sets }}</div><div class="lbl">Result Sets Published</div></div>
+<div class="card kpi gold"><div class="num">{{ students }}</div><div class="lbl">Students</div></div>
+</div>
+<h3 style="margin-top:26px">Quick Links</h3>
+<div class="grid">
+<div class="card"><h3 style="margin-top:0">📝 Results</h3>
+<p class="muted">Marks sheets per course, Excel import / export, publish and unpublish.</p>
+<p><a class="btn" href="{{ url_for('admin_results') }}">Open Results</a>
+<a class="btn ghost" href="{{ url_for('admin_grade_scale') }}">Grade Scale</a></p></div>
+<div class="card"><h3 style="margin-top:0">📝 Results Summary Report</h3>
+<p class="muted">Per course, per session: appeared, passed, failed, pass %, average and highest marks.</p>
+<p><a class="btn" href="{{ url_for('admin_report_results') }}">Open Report</a></p></div>
+<div class="card"><h3 style="margin-top:0">📅 Attendance Summary Report</h3>
+<p class="muted">Classes held and average attendance per course assignment.</p>
+<p><a class="btn" href="{{ url_for('admin_report_attendance') }}">Open Report</a></p></div>
+<div class="card"><h3 style="margin-top:0">🧑‍🎓 Students &amp; Transcripts</h3>
+<p class="muted">Read-only student list with transcript and roll-number slip PDFs.</p>
+<p><a class="btn" href="{{ url_for('admin_students') }}">Open Students</a></p></div>
+</div>
+{% endblock %}

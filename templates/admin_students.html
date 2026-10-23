@@ -1,8 +1,9 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<div class="toolbar"><h2>Students <span class="muted">({{ total }})</span></h2>
-<div><a class="btn ghost" href="{{ url_for('admin_students_import') }}">⬆ Excel Import</a>
-<a class="btn ghost" href="{{ url_for('admin_students_export', q=args.get('q',''), department_id=args.get('department_id',''), program_id=args.get('program_id',''), session_id=args.get('session_id','')) }}">⬇ Excel Export</a>
-<a class="btn green" href="{{ url_for('admin_student_new') }}">+ Add Student</a></div></div>
+{% block admin_body %}{% set role = session.get('role') %}<div class="toolbar"><h2>Students <span class="muted">({{ total }})</span></h2>
+<div>{% if role == 'admin' %}<a class="btn ghost" href="{{ url_for('admin_students_import') }}">⬆ Excel Import</a>
+{% endif %}<a class="btn ghost" href="{{ url_for('admin_students_export', q=args.get('q',''), department_id=args.get('department_id',''), program_id=args.get('program_id',''), session_id=args.get('session_id','')) }}">⬇ Excel Export</a>
+{% if role == 'admin' %}<a class="btn green" href="{{ url_for('admin_student_new') }}">+ Add Student</a>{% endif %}</div></div>
+{% if role != 'admin' %}<p class="muted">Read-only view for the {{ 'Accounts Office' if role == 'accounts' else 'Controller of Examinations' }} — student records are managed by the Admin.</p>{% endif %}
 
 <form method="get" class="filter-bar">
 <input name="q" placeholder="Search name / reg. no / CNIC" value="{{ args.get('q','') }}" style="min-width:240px">
@@ -17,12 +18,12 @@
 
 <table><tr><th>Reg. No</th><th>Name</th><th>CNIC</th><th>Department</th><th>Program</th><th>Session</th><th>Sem</th><th>Status</th><th>Actions</th></tr>
 {% for s in rows %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.cnic or '—' }}</td><td>{{ s.dept or '—' }}</td><td>{{ s.prog or '—' }}</td><td>{{ s.sess or s.session_name or '—' }}</td><td>{{ s.current_semester or '—' }}</td><td>{{ s.status or '—' }}</td>
-<td class="actions"><a class="btn small ghost" href="{{ url_for('admin_student_edit', student_id=s.id) }}">Edit</a>
-<a class="btn small ghost" href="{{ url_for('admin_student_transcript_pdf', student_id=s.id) }}">Transcript PDF</a>
-<a class="btn small ghost" href="{{ url_for('admin_student_card_pdf', student_id=s.id) }}">Card PDF</a>
-<a class="btn small ghost" href="{{ url_for('admin_student_slip_pdf', student_id=s.id) }}">Roll Slip PDF</a>
-<form method="post" action="{{ url_for('admin_student_reset_password', student_id=s.id) }}" onsubmit="return confirm('Reset password for {{ s.registration_no }}? The new password is shown once.');"><button class="btn small" type="submit">Reset Password</button></form>
-<form method="post" action="{{ url_for('admin_student_delete', student_id=s.id) }}" onsubmit="return confirm('Delete student {{ s.name }} and their login?');"><button class="btn small danger" type="submit">Delete</button></form></td></tr>
+<td class="actions">{% if role == 'admin' %}<a class="btn small ghost" href="{{ url_for('admin_student_edit', student_id=s.id) }}">Edit</a>
+{% endif %}{% if role in ('admin', 'coe') %}<a class="btn small ghost" href="{{ url_for('admin_student_transcript_pdf', student_id=s.id) }}">Transcript PDF</a>
+{% endif %}{% if role == 'admin' %}<a class="btn small ghost" href="{{ url_for('admin_student_card_pdf', student_id=s.id) }}">Card PDF</a>
+{% endif %}{% if role in ('admin', 'coe') %}<a class="btn small ghost" href="{{ url_for('admin_student_slip_pdf', student_id=s.id) }}">Roll Slip PDF</a>
+{% endif %}{% if role == 'admin' %}<form method="post" action="{{ url_for('admin_student_reset_password', student_id=s.id) }}" onsubmit="return confirm('Reset password for {{ s.registration_no }}? The new password is shown once.');"><button class="btn small" type="submit">Reset Password</button></form>
+<form method="post" action="{{ url_for('admin_student_delete', student_id=s.id) }}" onsubmit="return confirm('Delete student {{ s.name }} and their login?');"><button class="btn small danger" type="submit">Delete</button></form>{% endif %}{% if role == 'accounts' %}<span class="muted">—</span>{% endif %}</td></tr>
 {% else %}<tr><td colspan="9">No students match.</td></tr>{% endfor %}</table>
 
 {% if pages > 1 %}<div class="pagination">

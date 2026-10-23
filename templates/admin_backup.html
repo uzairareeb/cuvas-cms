@@ -25,4 +25,19 @@ automatic restore in the app.</p>
 by {{ last_backup.username }}.{% else %}No backup has been downloaded yet.{% endif %}</p>
 <p><a class="btn green" href="{{ url_for('admin_backup_download') }}">⬇ Download Full Backup (ZIP)</a></p>
 </div>
+
+<div class="card" style="margin-top:22px">
+<h3 style="margin-top:0">🚀 Go-Live</h3>
+<p>The public homepage currently
+{% if show_demo_accounts == '1' %}<strong>SHOWS</strong> the demo-accounts box (with the demo
+passwords) — turn it off before real users arrive.{% else %}does <strong>not</strong> show the
+demo-accounts box — the safe go-live state.{% endif %}</p>
+<form method="post" action="{{ url_for('admin_backup_demo_toggle') }}">
+<label><input type="checkbox" name="show_demo_accounts" value="1" {% if show_demo_accounts == '1' %}checked{% endif %}>
+Show demo accounts on the public homepage</label>
+<p><button class="btn" type="submit">Save Go-Live Setting</button></p>
+</form>
+<p class="muted">See the README “Go-Live Checklist” for the full pre-launch list (change all
+demo passwords, create real staff logins, set the real Campus Life links, take a backup).</p>
+</div>
 {% endblock %}

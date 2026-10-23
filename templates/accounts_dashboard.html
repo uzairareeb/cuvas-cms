@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block admin_body %}<h2>Accounts Office Dashboard</h2>
+<p class="muted">Welcome, {{ session.display_name }} — fee collection at a glance{% if sess %} for the current session <strong>{{ sess.name }}</strong>{% endif %}. Every figure comes from the same ledger computation as the Fee Collection report.</p>
+<div class="grid">
+<div class="card kpi"><div class="num">{{ pending_vouchers }}</div><div class="lbl">Pending Vouchers (all sessions)</div></div>
+<div class="card kpi teal"><div class="num">{{ rep.pending_proof }}</div><div class="lbl">Proofs Waiting for Verification{% if sess %} ({{ sess.name }}){% endif %}</div></div>
+<div class="card kpi gold"><div class="num">Rs {{ "{:,}".format(rep.collected_rs) }}</div><div class="lbl">Collected{% if sess %} ({{ sess.name }}){% endif %}</div></div>
+<div class="card kpi red"><div class="num">Rs {{ "{:,}".format(rep.outstanding_rs) }}</div><div class="lbl">Outstanding{% if sess %} ({{ sess.name }}){% endif %}</div></div>
+</div>
+<h3 style="margin-top:26px">Quick Links</h3>
+<div class="grid">
+<div class="card"><h3 style="margin-top:0">🎫 Vouchers</h3>
+<p class="muted">Generate challans, verify paid proofs, split installments and print challan PDFs.</p>
+<p><a class="btn" href="{{ url_for('admin_vouchers') }}">Open Vouchers</a>
+<a class="btn ghost" href="{{ url_for('admin_voucher_generate') }}">Generate</a></p></div>
+<div class="card"><h3 style="margin-top:0">🧾 Fee Plans &amp; Heads</h3>
+<p class="muted">Maintain the fee heads and the per-program / per-session fee plans.</p>
+<p><a class="btn" href="{{ url_for('admin_fee_plans') }}">Fee Plans</a>
+<a class="btn ghost" href="{{ url_for('admin_fee_heads') }}">Fee Heads</a></p></div>
+<div class="card"><h3 style="margin-top:0">💰 Fee Collection Report</h3>
+<p class="muted">Issued / collected / outstanding per session, department breakdown and the defaulters list.</p>
+<p><a class="btn" href="{{ url_for('admin_report_fees') }}">Open Report</a></p></div>
+<div class="card"><h3 style="margin-top:0">🧑‍🎓 Students</h3>
+<p class="muted">Read-only student list — look up a student before answering a fee query.</p>
+<p><a class="btn" href="{{ url_for('admin_students') }}">Open Students</a></p></div>
+</div>
+{% endblock %}
