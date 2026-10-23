@@ -960,44 +960,7 @@ and green/teal+gold theme):
   paid-proof upload, Create 2 Installments, transcript and
   roll-slip PDFs, and every form.
 
-## Bluecrest design sample (preview — pending approval)
-
-A self-contained **design sample** of the proposed "CUVAS Bluecrest"
-theme (Academic Navy `#17365D`, Primary Blue `#2457A7`, Academic
-Purple `#6654A3`, Gold `#E7B34C`, background `#F4F7FB`, white cards,
-Inter) built for review **before** any decision to redesign. It is
-additive only and reachable solely under `/preview/bluecrest/*`:
-
-- `GET /preview/bluecrest/login` — Bluecrest sign-in page with the
-  official CUVAS logo, delivered as text so the repo stays pushable:
-  `brand_logo.py` embeds it as a base64 string and
-  `GET /brand/cuvas-logo.png` serves the decoded bytes, byte-identical
-  to the supplied upload (md5 `0d1f109f6aa1adfe1126ea5379d3e703`;
-  never modified, recoloured or recreated).
-- `POST /preview/bluecrest/login` — authenticates through the **same**
-  `_sign_in` helper as `/login` (identical lockout, attempt recording
-  and audit rows; the refactor changed no `/login` behaviour).
-  Admins land on the sample dashboard; every other role is signed in
-  to its regular portal with a note that the sample covers the admin
-  dashboard only.
-- `GET /preview/bluecrest/admin` — Bluecrest admin shell + dashboard
-  (admin only): navy collapsible-group sidebar whose links all point
-  at the real (still green) admin pages, top-bar student search
-  (`/admin/students?q=`), and **real data only** — KPI cards (total
-  students, active faculty, pending vouchers, ledger outstanding),
-  a Students-by-Program SVG donut and Students-by-Session bars,
-  pending-approvals counts, latest notifications, recent students
-  and the latest audit-log activity.
-
-Everything lives in new files — `static/bluecrest.css`, `brand_logo.py`,
-`templates/preview_login.html`, `templates/preview_admin_base.html`,
-`templates/preview_admin.html` — plus the routes in `app.py`. **The live green theme is
-unchanged**: no existing template, stylesheet or route behaviour was
-modified, and `verify_preview.py` (35 checks, both databases)
-asserts — alongside the unchanged 843/844 regression profile — that
-no non-preview page references Bluecrest at all. If the sample is
-rejected, deleting those files and routes restores the status quo;
-if it is approved, the full rollout is a separate step.
+A "CUVAS Bluecrest" design sample was evaluated and not adopted (2026-10-23); the existing green/teal+gold theme is retained.
 
 ## Go-Live Checklist
 

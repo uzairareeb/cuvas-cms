@@ -157,8 +157,6 @@ from flask import (Flask, abort, g, redirect, render_template, request,
                    send_file, session, url_for, flash)
 from werkzeug.security import check_password_hash, generate_password_hash
 
-import brand_logo
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ------------------------------------------------------------------ config
@@ -1312,8 +1310,7 @@ def landing():
 
 
 def _sign_in(db, username, password):
-    """Shared credential check for /login and the Bluecrest preview
-    login (factored out of the /login view in the design-sample step
+    """Shared credential check (factored out of the /login view
     WITHOUT any behaviour change): lockout refusal, the password check
     (including the faculty-deactivation rule), and the attempt + audit
     recording for the locked / failed outcomes all happen here, exactly
@@ -1394,160 +1391,6 @@ def logout():
     log_audit("logout")
     session.clear()
     return redirect(url_for("landing"))
-
-
-# ------------------------------------------- Bluecrest design sample (preview)
-# A self-contained theme SAMPLE built for the user's approval: two
-# routes, two templates (preview_login.html, preview_admin*.html) and
-# one stylesheet (static/bluecrest.css) that NOTHING else references.
-# The live green theme is untouched — if the sample is rejected,
-# deleting these routes + files restores the status quo exactly.
-# Sign-in reuses the very same _sign_in helper as /login (lockout,
-# audit and attempt recording included); the sample dashboard reads
-# the same live figures as the current admin dashboard / fee report.
-# The official logo cannot be a binary file in the repo (the snapshot
-# push is text-only), so brand_logo.py carries it as base64 text and
-# this route serves the decoded bytes, byte-identical to the upload.
-
-@app.route("/brand/cuvas-logo.png")
-def brand_cuvas_logo():
-    resp = send_file(io.BytesIO(brand_logo.logo_png_bytes()),
-                     mimetype="image/png")
-    resp.headers["Cache-Control"] = "public, max-age=86400"
-    return resp
-
-
-@app.route("/preview/bluecrest/login", methods=["GET", "POST"])
-def preview_bluecrest_login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        db = get_db()
-        user, state = _sign_in(db, username, password)
-        if state == "locked":
-            _locked_flash(username)
-            return render_template("preview_login.html")
-        if state == "ok":
-            _start_session(user)
-            if user["role"] == "admin":
-                return redirect(url_for("preview_bluecrest_admin"))
-            flash("The Bluecrest design sample currently covers the "
-                  "admin dashboard only — you have been signed in to "
-                  "the regular portal.")
-            return redirect(url_for(home_for_role()))
-        flash("Invalid username or password.", "error")
-    return render_template("preview_login.html")
-
-
-@app.route("/preview/bluecrest/admin")
-@role_required("admin")
-def preview_bluecrest_admin():
-    db = get_db()
-    # KPIs — the same live figures the current admin dashboard and the
-    # fee computations use (students/faculty headcounts, the voucher
-    # queue, and the ledger's total debit-minus-credit outstanding).
-    kpi_students = db.execute(
-        "SELECT COUNT(*) c FROM students").fetchone()["c"]
-    kpi_faculty = db.execute(
-        "SELECT COUNT(*) c FROM faculty WHERE COALESCE(is_active,1)=1"
-    ).fetchone()["c"]
-    kpi_pending_vouchers = db.execute(
-        "SELECT COUNT(*) c FROM vouchers "
-        "WHERE status IN ('Pending','Proof Submitted')").fetchone()["c"]
-    led = db.execute(
-        "SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c "
-        "FROM ledger_entries").fetchone()
-    kpi_outstanding = (led["d"] or 0) - (led["c"] or 0)
-
-    # Donut data — students per program (real counts; pct of all
-    # students). Segment arcs are precomputed here as SVG dash values.
-    prog_rows = db.execute(
-        """SELECT COALESCE(p.name,'Unassigned') nm, COUNT(*) c
-           FROM students s LEFT JOIN programs p ON p.id=s.program_id
-           GROUP BY COALESCE(p.name,'Unassigned')
-           ORDER BY c DESC, nm""").fetchall()
-    program_total = sum(r["c"] for r in prog_rows)
-    palette = ["#2457A7", "#6654A3", "#E7B34C", "#17365D",
-               "#7FA8D9", "#9B8AC4", "#B9C9DE", "#4E7CB8"]
-    circ = 2 * math.pi * 84
-    programs, acc = [], 0.0
-    for i, r in enumerate(prog_rows):
-        frac = (r["c"] / program_total) if program_total else 0.0
-        seg = frac * circ
-        if len(prog_rows) > 1:
-            draw = max(seg - 2.0, 0.0)  # small gap between segments
-            dash = f"{draw:.2f} {circ - draw:.2f}"
-        else:
-            dash = f"{circ:.2f} 0.00"
-        programs.append({"name": r["nm"], "count": r["c"],
-                         "pct": f"{frac * 100:.1f}",
-                         "color": palette[i % len(palette)],
-                         "dash": dash, "offset": f"{-acc:.2f}"})
-        acc += seg
-
-    # Bars — students per session (width relative to the largest).
-    sess_rows = db.execute(
-        """SELECT COALESCE(ss.name,'Unassigned') nm, COUNT(*) c
-           FROM students s
-           LEFT JOIN academic_sessions ss ON ss.id=s.session_id
-           GROUP BY COALESCE(ss.name,'Unassigned')
-           ORDER BY c DESC, nm""").fetchall()
-    max_c = max([r["c"] for r in sess_rows], default=0)
-    sessions = [{"name": r["nm"], "count": r["c"],
-                 "pct": f"{(r['c'] * 100.0 / max_c) if max_c else 0:.1f}"}
-                for r in sess_rows]
-
-    def _count(sql):
-        return db.execute(sql).fetchone()["c"]
-
-    pending = [
-        {"label": "Paid proofs waiting verification",
-         "count": _count("SELECT COUNT(*) c FROM vouchers "
-                         "WHERE status='Proof Submitted'"),
-         "url": url_for("admin_vouchers")},
-        {"label": "Clearance items pending",
-         "count": _count("SELECT COUNT(*) c FROM clearance_items "
-                         "WHERE status='Pending'"),
-         "url": url_for("admin_clearance")},
-        {"label": "Scholarship applications undecided",
-         "count": _count("SELECT COUNT(*) c FROM scholarship_applications "
-                         "WHERE status IN ('Applied','Under Review')"),
-         "url": url_for("admin_scholarships")},
-        {"label": "Vehicle passes requested",
-         "count": _count("SELECT COUNT(*) c FROM vehicle_passes "
-                         "WHERE status='Requested'"),
-         "url": url_for("admin_vehicle_passes")},
-        {"label": "Society join requests",
-         "count": _count("SELECT COUNT(*) c FROM society_members "
-                         "WHERE status='Requested'"),
-         "url": url_for("admin_societies")},
-        {"label": "Open support tickets",
-         "count": _count("SELECT COUNT(*) c FROM tickets "
-                         "WHERE status='Open'"),
-         "url": url_for("admin_tickets")},
-    ]
-
-    notifications = db.execute(
-        "SELECT * FROM notifications "
-        "ORDER BY published_at DESC, id DESC LIMIT 4").fetchall()
-    recent_students = db.execute(
-        """SELECT s.*, p.name prog, ss.name sess FROM students s
-           LEFT JOIN programs p ON p.id=s.program_id
-           LEFT JOIN academic_sessions ss ON ss.id=s.session_id
-           ORDER BY s.id DESC LIMIT 5""").fetchall()
-    activity = db.execute(
-        "SELECT * FROM audit_log ORDER BY id DESC LIMIT 6").fetchall()
-    return render_template(
-        "preview_admin.html",
-        today=datetime.date.today().strftime("%A, %d %B %Y"),
-        kpi_students=kpi_students, kpi_faculty=kpi_faculty,
-        kpi_pending_vouchers=kpi_pending_vouchers,
-        kpi_outstanding=kpi_outstanding,
-        program_rows=programs, program_total=program_total,
-        session_rows=sessions,
-        pending=pending, pending_total=sum(p["count"] for p in pending),
-        notifications=notifications, recent_students=recent_students,
-        activity=activity)
 
 
 # ---------------------------------------------------------------- routes: admin dashboard
