@@ -7,8 +7,8 @@
   <section class="login-form-side">
     <div class="login-form-inner">
       <img class="login-logo" src="{{ url_for('cuvas_logo') }}" alt="CUVAS — Cholistan University of Veterinary and Animal Sciences, Bahawalpur" width="315" height="160">
-      <h1>Log in to your Account</h1>
-      <p class="login-welcome">Welcome back to MY CUVAS — University Management System.<br>Cholistan University of Veterinary and Animal Sciences, Bahawalpur</p>
+      <h1>Welcome Back!</h1>
+      <p class="login-welcome">Welcome back! Sign in to access your university account and academic services.</p>
       {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}{% for cat, m in msgs %}<div class="login-flash {{ cat }}" role="alert">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
       <form method="post" action="{{ url_for('login') }}" class="login-form">
         <label class="login-field">
