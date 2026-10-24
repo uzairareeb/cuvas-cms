@@ -1,0 +1,69 @@
+/* MY CUVAS login page only — split-screen design. Not imported elsewhere. */
+*, *::before, *::after { box-sizing: border-box; }
+:root {
+  --login-blue: #1d4ed8;
+  --login-blue-dark: #1e40af;
+  --login-blue-deep: #0f5ae0;
+  --login-ink: #1e293b;
+  --login-muted: #64748b;
+  --login-border: #e2e8f0;
+  --login-bg: #f5f7fa;
+}
+html, body { margin: 0; padding: 0; }
+body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--login-ink); background: #fff; }
+.login-shell { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+.login-form-side { display: flex; align-items: center; justify-content: center; padding: 48px 32px; background: #fff; }
+.login-form-inner { width: 100%; max-width: 420px; animation: login-in .3s ease both; }
+@keyframes login-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+.login-mark { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; background: var(--login-blue); color: #fff; font-weight: 800; font-size: 19px; }
+.login-word { font-weight: 800; font-size: 19px; letter-spacing: .02em; color: var(--login-blue-dark); }
+.login-form-inner h1 { font-size: 27px; line-height: 1.25; margin: 0 0 8px; font-weight: 800; }
+.login-welcome { color: var(--login-muted); font-size: 14px; line-height: 1.6; margin: 0 0 24px; }
+.login-flash { border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; font-size: 14px; line-height: 1.5; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+.login-flash.ok { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+.login-form { display: grid; gap: 18px; }
+.login-field-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 7px; }
+.login-input-wrap { position: relative; display: block; }
+.login-icon { position: absolute; left: 13px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+.login-input-wrap input { width: 100%; height: 48px; border: 1px solid var(--login-border); border-radius: 10px; padding: 0 14px 0 42px; font-size: 15px; color: var(--login-ink); background: #fff; outline: none; transition: border-color .2s ease, box-shadow .2s ease; }
+.login-input-wrap input::placeholder { color: #94a3b8; }
+.login-input-wrap input:focus { border-color: var(--login-blue); box-shadow: 0 0 0 3px rgba(29, 78, 216, .18); }
+.login-show { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: 0; background: none; cursor: pointer; color: #64748b; opacity: .55; padding: 4px; transition: opacity .2s ease; }
+.login-show svg { width: 19px; height: 19px; display: block; }
+.login-submit { height: 48px; border: 0; border-radius: 10px; background: var(--login-blue); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; box-shadow: 0 8px 20px rgba(29, 78, 216, .30); transition: background .2s ease, transform .15s ease, box-shadow .2s ease; }
+.login-submit:hover { background: var(--login-blue-dark); }
+.login-submit:active { transform: translateY(1px); }
+.login-submit:focus-visible, .login-demo-chip:focus-visible, .login-home a:focus-visible, .login-show:focus-visible { outline: 3px solid rgba(29, 78, 216, .35); outline-offset: 2px; }
+.login-demo { margin-top: 24px; background: var(--login-bg); border: 1px solid var(--login-border); border-radius: 12px; padding: 14px 16px; }
+.login-demo-title { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--login-muted); }
+.login-demo-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.login-demo-chip { border: 1px solid var(--login-border); background: #fff; border-radius: 999px; padding: 7px 12px; font-size: 12.5px; color: var(--login-ink); cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease; }
+.login-demo-chip:hover { border-color: var(--login-blue); box-shadow: 0 2px 10px rgba(29, 78, 216, .15); }
+.login-demo-chip code { font-size: 12px; }
+.login-home { margin: 22px 0 0; font-size: 14px; }
+.login-home a { color: var(--login-blue); text-decoration: none; font-weight: 600; }
+.login-home a:hover { text-decoration: underline; }
+/* Right panel */
+.login-art-side { position: relative; overflow: hidden; background: linear-gradient(135deg, #1d6ff2 0%, #0b4fd8 55%, #0a3fc0 100%); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 48px; text-align: center; }
+.login-art-side::before { content: ""; position: absolute; width: 560px; height: 560px; border-radius: 50%; background: rgba(255, 255, 255, .10); top: -140px; right: -160px; }
+.login-art-side::after { content: ""; position: absolute; width: 340px; height: 340px; border-radius: 50%; background: rgba(255, 255, 255, .08); bottom: -120px; left: -110px; }
+.login-art-glow { position: absolute; width: 480px; height: 480px; border-radius: 50%; background: radial-gradient(circle, rgba(96, 165, 250, .55) 0%, rgba(96, 165, 250, 0) 70%); top: 12%; left: 50%; transform: translateX(-50%); }
+.login-art { position: relative; z-index: 1; width: 100%; max-width: 520px; height: auto; filter: drop-shadow(0 24px 32px rgba(0, 0, 0, .25)); animation: login-in .3s ease both .05s; }
+.login-art-copy { position: relative; z-index: 1; max-width: 480px; margin-top: 8px; }
+.login-art-copy h2 { font-size: 26px; line-height: 1.3; margin: 0 0 10px; font-weight: 800; }
+.login-art-copy p { font-size: 15px; line-height: 1.65; color: rgba(255, 255, 255, .88); margin: 0; }
+.login-art-dots { display: flex; gap: 7px; justify-content: center; margin-top: 22px; }
+.login-art-dots span { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, .45); }
+.login-art-dots span.on { width: 22px; border-radius: 999px; background: #fff; }
+@media (max-width: 860px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-form-side { padding: 36px 22px; }
+  .login-art-side { padding: 40px 24px 48px; order: 2; }
+  .login-art { max-width: 420px; }
+  .login-art-copy h2 { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-form-inner, .login-art { animation: none; }
+  *, *::before, *::after { transition: none !important; }
+}

@@ -1393,6 +1393,20 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/brand/login-art.png")
+def login_art():
+    """Public login-page illustration: transparent PNG served from the
+    base64 text module (login_art.py) so no binary file is pushed."""
+    import base64
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "login_art", os.path.join(BASE_DIR, "login_art.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return send_file(io.BytesIO(base64.b64decode(mod.LOGIN_ART_B64)),
+                     mimetype="image/png")
+
+
 @app.route("/logout")
 def logout():
     log_audit("logout")

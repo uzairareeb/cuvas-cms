@@ -1,7 +1,71 @@
-{% extends "base.html" %}
-{% block body %}<div class="login-box"><h2>Sign in to MY CUVAS</h2>
-<form method="post"><label>Username</label><input name="username" required autofocus>
-<label>Password</label><input name="password" type="password" required>
-<button class="btn green" style="width:100%" type="submit">Login</button></form>
-<div class="demo-note"><strong>Demo credentials:</strong><br>Admin: <code>admin</code> / <code>Admin@123</code><br>Student: <code>student</code> / <code>Student@123</code></div>
-</div>{% endblock %}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log in — MY CUVAS</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='login.css') }}"></head>
+<body>
+<main class="login-shell">
+  <section class="login-form-side">
+    <div class="login-form-inner">
+      <div class="login-brand"><span class="login-mark">C</span><span class="login-word">CUVAS</span></div>
+      <h1>Log in to your Account</h1>
+      <p class="login-welcome">Welcome back to MY CUVAS — University Management System.<br>Cholistan University of Veterinary and Animal Sciences, Bahawalpur</p>
+      {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}{% for cat, m in msgs %}<div class="login-flash {{ cat }}" role="alert">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
+      <form method="post" action="{{ url_for('login') }}" class="login-form">
+        <label class="login-field">
+          <span class="login-field-label">Username</span>
+          <span class="login-input-wrap">
+            <svg class="login-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+            <input name="username" type="text" placeholder="Enter your username" required autofocus autocomplete="username">
+          </span>
+        </label>
+        <label class="login-field">
+          <span class="login-field-label">Password</span>
+          <span class="login-input-wrap">
+            <svg class="login-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+            <input id="login-password" name="password" type="password" placeholder="Enter your password" required autocomplete="current-password">
+            <button type="button" class="login-show" id="login-show" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </span>
+        </label>
+        <button class="login-submit" type="submit">Log in</button>
+      </form>
+      <div class="login-demo">
+        <p class="login-demo-title">Demo credentials — tap to fill:</p>
+        <div class="login-demo-row">
+          <button type="button" class="login-demo-chip" data-user="admin" data-pass="Admin@123">Admin · <code>admin</code> / <code>Admin@123</code></button>
+          <button type="button" class="login-demo-chip" data-user="student" data-pass="Student@123">Student · <code>student</code> / <code>Student@123</code></button>
+        </div>
+      </div>
+      <p class="login-home"><a href="{{ url_for('landing') }}">&larr; Back to homepage</a></p>
+    </div>
+  </section>
+  <aside class="login-art-side" aria-hidden="true">
+    <div class="login-art-glow"></div>
+    <img class="login-art" src="{{ url_for('login_art') }}" alt="" width="800" height="436">
+    <div class="login-art-copy">
+      <h2>One portal for your entire campus.</h2>
+      <p>Students, faculty, fees, results and campus services — everything in one place.</p>
+      <div class="login-art-dots"><span class="on"></span><span></span><span></span></div>
+    </div>
+  </aside>
+</main>
+<script>
+(function () {
+  var u = document.querySelector('[name="username"]');
+  var p = document.getElementById('login-password');
+  document.querySelectorAll('.login-demo-chip').forEach(function (b) {
+    b.addEventListener('click', function () {
+      u.value = b.getAttribute('data-user');
+      p.value = b.getAttribute('data-pass');
+      p.focus();
+    });
+  });
+  var s = document.getElementById('login-show');
+  s.addEventListener('click', function () {
+    var show = p.type === 'password';
+    p.type = show ? 'text' : 'password';
+    s.setAttribute('aria-pressed', show ? 'true' : 'false');
+    s.style.opacity = show ? '1' : '0.55';
+  });
+})();
+</script>
+</body></html>
