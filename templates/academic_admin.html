@@ -1,0 +1,99 @@
+{% extends "academic_admin_base.html" %}
+{% block title %}Admin Dashboard{% endblock %}
+{% block page_title %}Admin Dashboard{% endblock %}
+{% block academic_body %}
+<div class="ac-page-head">
+  <div class="ac-crumbs">Home / Overview</div>
+  <h1>Welcome, {{ session.display_name }}</h1>
+  <p>A live overview of MY CUVAS, shown in the Premium Minimal Academic preview theme. Every figure below comes from the same database as the current system.</p>
+</div>
+
+<div class="ac-grid">
+  <div class="ac-card ac-stat">
+    <div class="ac-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+    <div><div class="num">{{ "{:,}".format(kpis.students) }}</div><div class="lbl">Total Students</div></div>
+  </div>
+  <div class="ac-card ac-stat">
+    <div class="ac-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div>
+    <div><div class="num">{{ "{:,}".format(kpis.faculty) }}</div><div class="lbl">Active Faculty</div></div>
+  </div>
+  <div class="ac-card ac-stat">
+    <div class="ac-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/></svg></div>
+    <div><div class="num">{{ "{:,}".format(kpis.pending_vouchers) }}</div><div class="lbl">Pending Vouchers</div></div>
+  </div>
+  <div class="ac-card ac-stat">
+    <div class="ac-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg></div>
+    <div><div class="num">Rs {{ "{:,}".format(kpis.outstanding) }}</div><div class="lbl">Total Outstanding</div></div>
+  </div>
+</div>
+
+<div class="ac-two">
+  <section class="ac-card">
+    <h2>Students by Program</h2>
+    {% for r in by_program %}
+    <div class="ac-bar-row"><span>{{ r.name }}</span><span class="ac-bar"><i style="width:{{ r.pct }}%"></i></span><strong>{{ r.count }}</strong></div>
+    {% else %}<p class="muted">No students recorded yet.</p>{% endfor %}
+  </section>
+  <section class="ac-card">
+    <h2>Students by Session</h2>
+    {% for r in by_session %}
+    <div class="ac-bar-row"><span>{{ r.name }}</span><span class="ac-bar"><i style="width:{{ r.pct }}%"></i></span><strong>{{ r.count }}</strong></div>
+    {% else %}<p class="muted">No students recorded yet.</p>{% endfor %}
+  </section>
+</div>
+
+<div class="ac-two">
+  <section class="ac-card">
+    <h2>Pending Approvals</h2>
+    <ul class="ac-list">
+      {% for a in approvals %}<li><a href="{{ a.url }}">{{ a.label }}</a><span class="ac-badge {% if a.count %}warning{% else %}info{% endif %}">{{ a.count }} waiting</span></li>{% endfor %}
+    </ul>
+  </section>
+  <section class="ac-card">
+    <h2>Quick Links</h2>
+    <div class="ac-quick">
+      <a href="{{ url_for('admin_students') }}">Students</a>
+      <a href="{{ url_for('admin_vouchers') }}">Vouchers</a>
+      <a href="{{ url_for('admin_results') }}">Results</a>
+      <a href="{{ url_for('admin_clearance') }}">Clearance</a>
+      <a href="{{ url_for('admin_scholarships') }}">Scholarships</a>
+      <a href="{{ url_for('admin_reports') }}">Reports</a>
+      <a href="{{ url_for('admin_audit') }}">Audit Log</a>
+      <a href="{{ url_for('admin_backup') }}">Backup</a>
+      <a href="{{ url_for('admin_dashboard') }}">Current Admin Dashboard</a>
+    </div>
+    <h2 style="margin-top:24px">Recent Notifications</h2>
+    <ul class="ac-list">
+      {% for n in notifications %}<li><span>{{ n.title }}</span><span class="muted">{{ n.published_at }}</span></li>{% else %}<li><span class="muted">No notifications yet.</span></li>{% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="ac-card" style="margin-top:20px">
+  <h2>Pending Vouchers</h2>
+  <div class="ac-table-wrap"><table class="ac-table">
+    <thead><tr><th>Challan No.</th><th>Student</th><th>Title</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for v in pending %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}</td><td>{{ v.title }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="ac-badge warning">{{ v.status }}</span></td></tr>{% else %}<tr><td colspan="6" class="muted">No pending vouchers.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<div class="ac-two">
+  <section class="ac-card">
+    <h2>Recent Students</h2>
+    <div class="ac-table-wrap"><table class="ac-table">
+      <thead><tr><th>Reg. No.</th><th>Name</th><th>Program</th><th>Semester</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td><span class="ac-badge {% if s.status == 'Active' %}success{% else %}info{% endif %}">{{ s.status }}</span></td></tr>{% else %}<tr><td colspan="5" class="muted">No students yet.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="ac-card">
+    <h2>Recent Activity</h2>
+    <ul class="ac-list">
+      {% for a in recent_activity %}<li><span><strong>{{ a.action }}</strong>{% if a.details %} — {{ a.details }}{% endif %}<br><span class="muted">{{ a.username }} · {{ a.created_at }}</span></span></li>{% else %}<li><span class="muted">No activity recorded yet.</span></li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

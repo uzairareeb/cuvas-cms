@@ -8567,5 +8567,153 @@ def admin_backup_download():
                      mimetype="application/zip")
 
 
+# ================================================================
+# PREVIEW SAMPLE — Premium Minimal Academic theme (pending decision)
+# Additive only: three routes + templates/academic_*.html +
+# static/academic.css + brand_assets.py. The live theme
+# (static/style.css and every existing template) is untouched, and
+# sign-in reuses the shared _sign_in/_start_session/_locked_flash
+# helpers exactly like /login (same lockout + audit behaviour).
+# ================================================================
+import brand_assets
+
+
+@app.route("/brand/cuvas-logo.jpg")
+def brand_cuvas_logo_jpg():
+    """The official CUVAS logo (user-supplied JPG), served byte-
+    identical from the base64 text module brand_assets.py — the
+    GitHub connector cannot push binary files."""
+    resp = send_file(io.BytesIO(brand_assets.logo_jpg_bytes()),
+                     mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/preview/academic/login", methods=["GET", "POST"])
+def academic_login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        db = get_db()
+        user, state = _sign_in(db, username, password)
+        if state == "locked":
+            _locked_flash(username)
+            return render_template("academic_login.html")
+        if state == "ok":
+            _start_session(user)
+            if user["role"] == "admin":
+                return redirect(url_for("academic_admin"))
+            flash("This design preview is admin-only; you have been "
+                  "signed in to your normal home instead.", "error")
+            return redirect(url_for(home_for_role()))
+        flash("Invalid username or password.", "error")
+    return render_template("academic_login.html")
+
+
+def _academic_admin_data(db):
+    """Real figures for the preview dashboard — the same tables and
+    shared helpers as the real admin screens; nothing invented."""
+    kpis = {
+        "students": db.execute(
+            "SELECT COUNT(*) c FROM students").fetchone()["c"],
+        "faculty": db.execute(
+            "SELECT COUNT(*) c FROM faculty "
+            "WHERE COALESCE(is_active,1)=1").fetchone()["c"],
+        "pending_vouchers": db.execute(
+            "SELECT COUNT(*) c FROM vouchers "
+            "WHERE status IN ('Pending','Proof Submitted')"
+        ).fetchone()["c"],
+        "outstanding": db.execute(
+            "SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) c "
+            "FROM ledger_entries").fetchone()["c"],
+    }
+
+    def _bars(rows):
+        top = max([r["count"] for r in rows], default=0)
+        return [{"name": r["name"], "count": r["count"],
+                 "pct": round(100 * r["count"] / top) if top else 0}
+                for r in rows]
+
+    by_program = _bars(db.execute(
+        """SELECT COALESCE(p.name,'Unassigned') name, COUNT(*) count
+           FROM students s LEFT JOIN programs p ON p.id=s.program_id
+           GROUP BY 1 ORDER BY count DESC, 1""").fetchall())
+    by_session = _bars(db.execute(
+        """SELECT COALESCE(sess.name, s.session_name, 'Unassigned') name,
+                  COUNT(*) count
+           FROM students s
+           LEFT JOIN academic_sessions sess ON sess.id=s.session_id
+           GROUP BY 1 ORDER BY count DESC, 1""").fetchall())
+
+    def _count(sql):
+        return db.execute(sql).fetchone()["c"]
+
+    approvals = [
+        {"label": "Fee voucher proofs to verify",
+         "count": _count("SELECT COUNT(*) c FROM vouchers "
+                         "WHERE status='Proof Submitted'"),
+         "url": url_for("admin_vouchers")},
+        {"label": "Student documents to verify",
+         "count": _count("SELECT COUNT(*) c FROM student_documents "
+                         "WHERE status='Pending'"),
+         "url": url_for("admin_documents")},
+        {"label": "Open support tickets",
+         "count": _count("SELECT COUNT(*) c FROM tickets "
+                         "WHERE status IN ('Open','In Process')"),
+         "url": url_for("admin_tickets")},
+        {"label": "Clearance items pending",
+         "count": _count("SELECT COUNT(*) c FROM clearance_items "
+                         "WHERE status='Pending'"),
+         "url": url_for("admin_clearance")},
+        {"label": "Scholarship applications to decide",
+         "count": _count("SELECT COUNT(*) c FROM scholarship_applications "
+                         "WHERE status IN ('Applied','Under Review')"),
+         "url": url_for("admin_scholarships")},
+        {"label": "Society join requests",
+         "count": _pending_societies(db),
+         "url": url_for("admin_societies")},
+        {"label": "Vehicle pass requests",
+         "count": _pending_vehicles(db),
+         "url": url_for("admin_vehicle_passes")},
+        {"label": "Course repeat requests",
+         "count": _count("SELECT COUNT(*) c FROM repeat_requests "
+                         "WHERE status='Requested'"),
+         "url": url_for("admin_repeat")},
+    ]
+    pending = db.execute(
+        "SELECT v.*, s.name student_name FROM vouchers v "
+        "JOIN students s ON s.id=v.student_id "
+        "WHERE v.status IN ('Pending','Proof Submitted') "
+        "ORDER BY v.id DESC").fetchall()
+    recent_students = db.execute(
+        """SELECT s.*, d.name dept, p.name prog FROM students s
+           LEFT JOIN departments d ON d.id=s.department_id
+           LEFT JOIN programs p ON p.id=s.program_id
+           ORDER BY s.id DESC LIMIT 6""").fetchall()
+    notifications = db.execute(
+        """SELECT * FROM notifications
+           WHERE COALESCE(is_published,1)=1
+             AND COALESCE(audience,'All') IN ('All','Students')
+           ORDER BY published_at DESC, id DESC LIMIT 5""").fetchall()
+    recent_activity = db.execute(
+        "SELECT * FROM audit_log ORDER BY id DESC LIMIT 6").fetchall()
+    return {"kpis": kpis, "by_program": by_program,
+            "by_session": by_session, "approvals": approvals,
+            "pending": pending, "recent_students": recent_students,
+            "notifications": notifications,
+            "recent_activity": recent_activity}
+
+
+@app.route("/preview/academic/admin")
+def academic_admin():
+    if not session.get("user_id"):
+        return redirect(url_for("academic_login"))
+    if session.get("role") != "admin":
+        flash("This design preview is admin-only.", "error")
+        return redirect(url_for(home_for_role()))
+    return render_template("academic_admin.html",
+                           **_academic_admin_data(get_db()))
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5055, debug=False)

@@ -962,6 +962,45 @@ and green/teal+gold theme):
 
 A "CUVAS Bluecrest" design sample was evaluated and not adopted (2026-10-23); the existing green/teal+gold theme is retained.
 
+## Premium Minimal Academic theme (preview sample — pending decision)
+
+A second design direction is being evaluated as an **additive preview
+only**; the live green/teal+gold theme is untouched until a decision
+is made.
+
+- **Routes:** `GET/POST /preview/academic/login` and
+  `GET /preview/academic/admin` (admin-only; sign-in reuses the shared
+  `_sign_in` / `_start_session` / `_locked_flash` helpers, so lockout
+  and audit behaviour are identical to `/login`; other roles are
+  signed in to their normal home with a note). Files:
+  `templates/academic_login.html`, `templates/academic_admin_base.html`,
+  `templates/academic_admin.html`, `static/academic.css` — the
+  stylesheet is loaded ONLY by these preview templates.
+- **Design system:** white surfaces on `#F5F7FA`, primary `#244A7C`,
+  secondary `#3B6295`, text `#1E293B` / `#64748B`, borders `#E2E8F0`,
+  success `#15803D`, warning `#B45309`, error `#DC2626`; Inter
+  typography, subtle shadows, 150–300 ms transitions and a
+  `prefers-reduced-motion` block, all as tokens in `academic.css`.
+- **Text-only navigation (strict):** the sidebar groups (Overview;
+  Management; Finance; Examinations; Services; System) show text
+  names only — no icons, emojis or glyphs in any menu or page link;
+  expand/collapse is CSS-animated with a border-drawn indicator.
+  Icons (inline SVG) appear only inside stat cards / functional
+  controls. The dashboard shows real data only: KPIs, students by
+  program/session, pending-approval queues, pending vouchers, recent
+  students, notifications and audit activity.
+- **Logo delivery:** the official CUVAS logo (user-supplied JPG) is
+  carried as base64 text in `brand_assets.py` (the GitHub connector
+  cannot push binaries) and served byte-identical at
+  `GET /brand/cuvas-logo.jpg` (`image/jpeg`); md5 verified against
+  the source file by the suite.
+- **Verification:** `verify_academic.py` — 22 checks (logo md5,
+  preview login/lockout plumbing, real-KPI equality, navigation
+  purity asserted programmatically, palette tokens, preview-only
+  stylesheet, existing pages intact) — **22/22 PASS on both SQLite
+  and PostgreSQL**; the full v02–v16 regression profile is unchanged
+  (843 PASS + the one known v11 exception per backend).
+
 ## Go-Live Checklist
 
 Before real users arrive:

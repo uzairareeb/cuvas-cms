@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — MY CUVAS Preview</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='academic.css') }}">
+</head>
+<body>
+<div class="ac-login-wrap">
+  <main class="ac-login">
+    <img src="{{ url_for('brand_cuvas_logo_jpg') }}" alt="Cholistan University of Veterinary and Animal Sciences, Bahawalpur">
+    <h1>Sign in to MY CUVAS</h1>
+    <p class="sub">Premium Minimal Academic theme — preview sample.</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="ac-flash {{ category }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    <form method="post">
+      <div class="ac-field">
+        <label for="username">Username</label>
+        <input class="ac-input" id="username" name="username" required autofocus autocomplete="username">
+      </div>
+      <div class="ac-field">
+        <label for="password">Password</label>
+        <input class="ac-input" id="password" name="password" type="password" required autocomplete="current-password">
+      </div>
+      <button class="ac-btn" type="submit">Login</button>
+    </form>
+    <div class="demo"><strong>Demo credentials:</strong><br>Admin: <code>admin</code> / <code>Admin@123</code><br>Student: <code>student</code> / <code>Student@123</code></div>
+  </main>
+</div>
+</body>
+</html>
