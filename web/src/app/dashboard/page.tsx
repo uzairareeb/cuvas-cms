@@ -3,8 +3,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Bell,
+  BookOpen,
+  ClipboardList,
+  DatabaseBackup,
+  FileText,
   GraduationCap,
+  LayoutDashboard,
+  Newspaper,
   ReceiptText,
+  ScrollText,
+  ShieldCheck,
+  Sparkles,
+  TicketCheck,
+  Trophy,
   Users,
   Wallet,
   type LucideIcon,
@@ -19,12 +31,18 @@ import {
 } from "@/lib/api";
 import Shell from "@/components/shell/Shell";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import SectionCard from "@/components/premium/SectionCard";
+import StatCard from "@/components/premium/StatCard";
+import DataTable from "@/components/premium/DataTable";
+import EmptyState from "@/components/premium/EmptyState";
+import { DonutChart, GradientBars } from "@/components/premium/Charts";
 
 function fmtRs(n: number) {
   return "Rs " + n.toLocaleString("en-US");
@@ -36,88 +54,74 @@ function fmtDate(s: string | null) {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleString();
 }
 
-function Bars({
-  rows,
-}: {
-  rows: { name: string; count: number }[];
-}) {
-  const max = Math.max(1, ...rows.map((r) => r.count));
-  if (rows.length === 0) {
-    return <p className="text-sm text-faint">No data yet.</p>;
-  }
-  return (
-    <ul className="space-y-2.5">
-      {rows.map((r) => (
-        <li key={r.name} className="text-sm">
-          <div className="mb-1 flex items-baseline justify-between gap-3">
-            <span className="min-w-0 truncate text-ink">{r.name}</span>
-            <span className="shrink-0 font-medium text-navy">{r.count}</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded bg-appbg">
-            <div
-              className="h-full rounded bg-brandblue"
-              style={{ width: `${Math.max(3, (r.count / max) * 100)}%` }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
+// Status words come from the API verbatim; the tone mapping only
+// colours them — unknown statuses fall back to a neutral pill.
+function statusBadge(status: string | null) {
+  const s = (status ?? "").toLowerCase();
+  if (!status) return <Badge variant="muted">—</Badge>;
+  if (/(paid|verified|approved|passed|active|clear)/.test(s))
+    return <Badge variant="success">{status}</Badge>;
+  if (/(pending|submitted|proof|waiting|review)/.test(s))
+    return <Badge variant="warning">{status}</Badge>;
+  if (/(reject|fail|cancel|expir|overdue)/.test(s))
+    return <Badge variant="error">{status}</Badge>;
+  return <Badge variant="muted">{status}</Badge>;
 }
 
-function KpiCard({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  icon: LucideIcon;
-}) {
-  return (
-    <Card className="rounded-xl">
-      <CardContent className="flex items-center gap-4 p-5">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy text-white">
-          <Icon className="h-5 w-5" aria-hidden />
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate text-2xl font-semibold text-navy">
-            {value}
-          </span>
-          <span className="block text-sm text-faint">{label}</span>
-        </span>
-      </CardContent>
-    </Card>
-  );
+const APPROVAL_ICONS: Record<string, LucideIcon> = {
+  voucher: ReceiptText,
+  document: FileText,
+  ticket: Newspaper,
+  clearance: ShieldCheck,
+  scholarship: Sparkles,
+  society: Users,
+  vehicle: TicketCheck,
+  repeat: BookOpen,
+};
+
+function approvalIcon(key: string): LucideIcon {
+  for (const [k, icon] of Object.entries(APPROVAL_ICONS)) {
+    if (key.toLowerCase().includes(k)) return icon;
+  }
+  return FileText;
 }
 
 function Skeleton() {
   return (
-    <div className="animate-pulse space-y-6" aria-label="Loading dashboard">
+    <div className="space-y-6" aria-label="Loading dashboard">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-24 rounded-xl bg-surface shadow" />
+          <div key={i} className="skeleton-shimmer h-[118px] rounded-2xl" />
         ))}
       </div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <div className="h-56 rounded-xl bg-surface shadow" />
-        <div className="h-56 rounded-xl bg-surface shadow" />
+        <div className="skeleton-shimmer h-72 rounded-2xl" />
+        <div className="skeleton-shimmer h-72 rounded-2xl" />
       </div>
-      <div className="h-64 rounded-xl bg-surface shadow" />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="skeleton-shimmer h-64 rounded-2xl" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="skeleton-shimmer h-72 rounded-2xl" />
+        <div className="skeleton-shimmer h-72 rounded-2xl" />
+      </div>
+      <div className="skeleton-shimmer h-56 rounded-2xl" />
     </div>
   );
 }
 
-const QUICK_LINKS: { label: string; href: string }[] = [
-  { label: "Students", href: "/admin/students" },
-  { label: "Vouchers", href: "/admin/vouchers" },
-  { label: "Results", href: "/admin/results" },
-  { label: "Clearance", href: "/admin/clearance" },
-  { label: "Scholarships", href: "/admin/scholarships" },
-  { label: "Reports", href: "/admin/reports" },
-  { label: "Audit Log", href: "/admin/audit" },
-  { label: "Backup", href: "/admin/backup" },
-  { label: "Current Admin Dashboard", href: "/admin" },
+const QUICK_LINKS: { label: string; href: string; icon: LucideIcon }[] = [
+  { label: "Students", href: "/admin/students", icon: GraduationCap },
+  { label: "Vouchers", href: "/admin/vouchers", icon: ReceiptText },
+  { label: "Results", href: "/admin/results", icon: Trophy },
+  { label: "Clearance", href: "/admin/clearance", icon: ShieldCheck },
+  { label: "Scholarships", href: "/admin/scholarships", icon: Sparkles },
+  { label: "Reports", href: "/admin/reports", icon: ScrollText },
+  { label: "Audit Log", href: "/admin/audit", icon: ClipboardList },
+  { label: "Backup", href: "/admin/backup", icon: DatabaseBackup },
+  { label: "Legacy Admin Home", href: "/admin", icon: LayoutDashboard },
 ];
 
 export default function DashboardPage() {
@@ -159,7 +163,7 @@ export default function DashboardPage() {
   if (!user && !error) {
     return (
       <div className="min-h-screen bg-appbg px-4 py-6 sm:px-6">
-        <div className="mx-auto w-full max-w-7xl">
+        <div className="mx-auto w-full max-w-[1280px]">
           <Skeleton />
         </div>
       </div>
@@ -169,7 +173,7 @@ export default function DashboardPage() {
   if (!user) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-appbg px-4">
-        <Card className="w-full max-w-md rounded-xl">
+        <Card className="w-full max-w-md rounded-2xl shadow-card">
           <CardHeader>
             <CardTitle className="text-navy">Dashboard unavailable</CardTitle>
           </CardHeader>
@@ -182,6 +186,10 @@ export default function DashboardPage() {
     );
   }
 
+  const totalWaiting = data
+    ? data.pending_approvals.reduce((s, q) => s + q.count, 0)
+    : 0;
+
   return (
     <Shell user={user} title="Admin Dashboard">
       {!data ? (
@@ -191,7 +199,7 @@ export default function DashboardPage() {
           {error ? (
             <p
               role="alert"
-              className="rounded-md border border-error/40 bg-error/5 px-3 py-2 text-sm text-error"
+              className="rounded-xl border border-error/40 bg-error/5 px-4 py-3 text-sm text-error"
             >
               {error}{" "}
               <button
@@ -204,247 +212,267 @@ export default function DashboardPage() {
             </p>
           ) : null}
 
+          {/* Page intro — live-data marker is honest: every figure below
+              is rendered from the /api/v1/admin/dashboard response. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-faint">
+              Live snapshot of university operations — students, fees,
+              approvals and recent activity.
+            </p>
+            <span className="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success ring-1 ring-inset ring-success/25">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              Live data
+            </span>
+          </div>
+
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <KpiCard
+            <StatCard
               label="Total Students"
               value={data.kpis.total_students.toLocaleString("en-US")}
+              subtext="Across all programs"
               icon={GraduationCap}
+              tone="navy"
             />
-            <KpiCard
+            <StatCard
               label="Active Faculty"
               value={data.kpis.active_faculty.toLocaleString("en-US")}
+              subtext="Currently active"
               icon={Users}
+              tone="blue"
             />
-            <KpiCard
+            <StatCard
               label="Pending Vouchers"
               value={data.kpis.pending_vouchers.toLocaleString("en-US")}
+              subtext="Awaiting verification"
               icon={ReceiptText}
+              tone="gold"
             />
-            <KpiCard
+            <StatCard
               label="Total Outstanding"
               value={fmtRs(data.kpis.total_outstanding)}
+              subtext="Across all fee ledgers"
               icon={Wallet}
+              tone="green"
             />
           </section>
 
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Students by Program
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Bars rows={data.students_by_program} />
-              </CardContent>
-            </Card>
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Students by Session
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Bars rows={data.students_by_session} />
-              </CardContent>
-            </Card>
+            <SectionCard
+              title="Students by Program"
+              subtitle="Share of enrolment across programs"
+            >
+              <DonutChart
+                rows={data.students_by_program}
+                centerLabel="Students"
+              />
+            </SectionCard>
+            <SectionCard
+              title="Students by Session"
+              subtitle="Enrolment per admission session"
+            >
+              <GradientBars rows={data.students_by_session} />
+            </SectionCard>
           </section>
 
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Pending Approvals
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="divide-y divide-line">
-                  {data.pending_approvals.map((q) => (
+            <SectionCard
+              title="Pending Approvals"
+              subtitle="Queues waiting for an admin decision"
+              action={
+                totalWaiting > 0 ? (
+                  <Badge variant="gold">{totalWaiting} waiting</Badge>
+                ) : (
+                  <Badge variant="success">All clear</Badge>
+                )
+              }
+            >
+              <ul className="-my-1 divide-y divide-line/70">
+                {data.pending_approvals.map((q) => {
+                  const Icon = approvalIcon(q.key);
+                  return (
                     <li key={q.key}>
                       <a
                         href={q.href}
-                        className="flex items-center justify-between gap-3 py-2 text-sm hover:underline"
+                        className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-appbg"
                       >
-                        <span className="min-w-0 truncate text-ink">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-navy/5 text-navy ring-1 ring-inset ring-line transition-colors group-hover:bg-navy/10">
+                          <Icon className="h-4 w-4" aria-hidden />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
                           {q.label}
                         </span>
-                        <span
-                          className={
-                            q.count > 0
-                              ? "shrink-0 rounded-full bg-gold px-2 py-0.5 text-xs font-semibold text-navy-deep"
-                              : "shrink-0 rounded-full bg-appbg px-2 py-0.5 text-xs font-medium text-faint"
-                          }
-                        >
-                          {q.count} waiting
-                        </span>
+                        {q.count > 0 ? (
+                          <Badge variant="gold">{q.count} waiting</Badge>
+                        ) : (
+                          <Badge variant="muted">Clear</Badge>
+                        )}
                       </a>
                     </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
+                  );
+                })}
+              </ul>
+            </SectionCard>
 
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Recent Notifications
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.recent_notifications.length === 0 ? (
-                  <p className="text-sm text-faint">No notifications yet.</p>
-                ) : (
-                  <ul className="space-y-3">
-                    {data.recent_notifications.map((n, i) => (
-                      <li key={i} className="text-sm">
-                        <p className="font-medium leading-snug text-ink">
+            <SectionCard
+              title="Recent Notifications"
+              subtitle="Latest announcements to the university"
+            >
+              {data.recent_notifications.length === 0 ? (
+                <EmptyState
+                  icon={Bell}
+                  title="No notifications yet"
+                  message="New announcements will appear here."
+                />
+              ) : (
+                <ul className="space-y-4">
+                  {data.recent_notifications.map((n, i) => (
+                    <li key={i} className="relative flex gap-3 text-sm">
+                      <span
+                        className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brandblue ring-4 ring-brandblue/10"
+                        aria-hidden
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-medium leading-snug text-ink">
                           {n.title}
-                        </p>
-                        <p className="text-xs text-faint">
+                        </span>
+                        <span className="mt-0.5 block text-xs text-faint">
                           {fmtDate(n.created_at)}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">Quick Links</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="grid grid-cols-1 gap-1">
-                  {QUICK_LINKS.map((l) => (
-                    <li key={l.label}>
-                      <a
-                        href={l.href}
-                        className="block rounded-md px-2 py-1.5 text-sm text-brandblue hover:bg-appbg hover:underline"
-                      >
-                        {l.label}
-                      </a>
+                        </span>
+                      </span>
                     </li>
                   ))}
                 </ul>
-              </CardContent>
-            </Card>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title="Quick Links"
+              subtitle="Jump straight to the busiest admin pages"
+            >
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                {QUICK_LINKS.map((l) => (
+                  <li key={l.label}>
+                    <a
+                      href={l.href}
+                      className="group flex items-center gap-2.5 rounded-xl border border-line px-3 py-2.5 text-sm font-medium text-ink transition-all duration-200 hover:-translate-y-px hover:border-brandblue/40 hover:bg-brandblue/5 hover:text-navy hover:shadow-card"
+                    >
+                      <l.icon
+                        className="h-4 w-4 shrink-0 text-brandblue"
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {l.label}
+                      </span>
+                      <span
+                        className="text-faint transition-transform duration-200 group-hover:translate-x-0.5"
+                        aria-hidden
+                      >
+                        →
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
           </section>
 
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Pending Vouchers
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.pending_vouchers.length === 0 ? (
-                  <p className="text-sm text-faint">No pending vouchers.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-line text-left text-faint">
-                          <th className="py-2 pr-3 font-medium">Challan</th>
-                          <th className="py-2 pr-3 font-medium">Student</th>
-                          <th className="py-2 pr-3 font-medium">Amount</th>
-                          <th className="py-2 font-medium">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.pending_vouchers.map((v) => (
-                          <tr
-                            key={v.challan_no}
-                            className="border-b border-line/60 last:border-0"
-                          >
-                            <td className="py-2 pr-3 whitespace-nowrap">
-                              {v.challan_no}
-                            </td>
-                            <td className="py-2 pr-3">{v.student_name}</td>
-                            <td className="py-2 pr-3 whitespace-nowrap">
-                              {fmtRs(v.amount)}
-                            </td>
-                            <td className="py-2">{v.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <SectionCard
+              title="Pending Vouchers"
+              subtitle="Latest vouchers awaiting verification"
+            >
+              <DataTable
+                columns={[
+                  { label: "Challan" },
+                  { label: "Student" },
+                  { label: "Amount", align: "right" },
+                  { label: "Status" },
+                ]}
+                rows={data.pending_vouchers.map((v) => [
+                  <span
+                    key="c"
+                    className="whitespace-nowrap font-medium text-navy"
+                  >
+                    {v.challan_no}
+                  </span>,
+                  <span key="s" className="whitespace-nowrap">
+                    {v.student_name}
+                  </span>,
+                  <span key="a" className="whitespace-nowrap font-medium">
+                    {fmtRs(v.amount)}
+                  </span>,
+                  <span key="t">{statusBadge(v.status)}</span>,
+                ])}
+                emptyMessage="No vouchers are waiting for verification right now."
+              />
+            </SectionCard>
 
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Recent Students
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.recent_students.length === 0 ? (
-                  <p className="text-sm text-faint">No students yet.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-line text-left text-faint">
-                          <th className="py-2 pr-3 font-medium">Reg. No.</th>
-                          <th className="py-2 pr-3 font-medium">Name</th>
-                          <th className="py-2 pr-3 font-medium">Program</th>
-                          <th className="py-2 font-medium">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.recent_students.map((s) => (
-                          <tr
-                            key={s.reg_no}
-                            className="border-b border-line/60 last:border-0"
-                          >
-                            <td className="py-2 pr-3 whitespace-nowrap">
-                              {s.reg_no}
-                            </td>
-                            <td className="py-2 pr-3">{s.name}</td>
-                            <td className="py-2 pr-3">{s.program ?? "—"}</td>
-                            <td className="py-2">{s.status ?? "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <SectionCard
+              title="Recent Students"
+              subtitle="Most recently added student records"
+            >
+              <DataTable
+                columns={[
+                  { label: "Reg. No." },
+                  { label: "Name" },
+                  { label: "Program" },
+                  { label: "Status" },
+                ]}
+                rows={data.recent_students.map((s) => [
+                  <span
+                    key="r"
+                    className="whitespace-nowrap font-medium text-navy"
+                  >
+                    {s.reg_no}
+                  </span>,
+                  <span key="n" className="whitespace-nowrap">
+                    {s.name}
+                  </span>,
+                  <span key="p" className="whitespace-nowrap">
+                    {s.program ?? "—"}
+                  </span>,
+                  <span key="t">{statusBadge(s.status)}</span>,
+                ])}
+                emptyMessage="No student records have been added yet."
+              />
+            </SectionCard>
           </section>
 
-          <section>
-            <Card className="rounded-xl">
-              <CardHeader>
-                <CardTitle className="text-base text-navy">
-                  Recent Activity
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {data.recent_activity.length === 0 ? (
-                  <p className="text-sm text-faint">No activity recorded yet.</p>
-                ) : (
-                  <ul className="divide-y divide-line">
-                    {data.recent_activity.map((a, i) => (
-                      <li key={i} className="py-2 text-sm">
-                        <span className="font-medium text-ink">{a.action}</span>
-                        {a.detail ? (
-                          <span className="text-faint"> — {a.detail}</span>
-                        ) : null}
-                        <span className="block text-xs text-faint">
-                          {fmtDate(a.created_at)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </section>
+          <SectionCard
+            title="Recent Activity"
+            subtitle="Audit trail of the latest admin actions"
+          >
+            {data.recent_activity.length === 0 ? (
+              <EmptyState
+                icon={ClipboardList}
+                title="No activity recorded yet"
+                message="Admin actions will be logged here as they happen."
+              />
+            ) : (
+              <ol className="relative space-y-5 border-l-2 border-line pl-5">
+                {data.recent_activity.map((a, i) => (
+                  <li key={i} className="relative text-sm">
+                    <span
+                      className="absolute -left-[27px] top-1 h-2.5 w-2.5 rounded-full bg-gold ring-4 ring-gold/20"
+                      aria-hidden
+                    />
+                    <p className="leading-snug">
+                      <span className="font-medium text-ink">{a.action}</span>
+                      {a.detail ? (
+                        <span className="text-faint"> — {a.detail}</span>
+                      ) : null}
+                    </p>
+                    <p className="mt-0.5 text-xs text-faint">
+                      {fmtDate(a.created_at)}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </SectionCard>
         </div>
       )}
     </Shell>

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
   Building2,
   CalendarDays,
+  ChevronDown,
   ClipboardList,
   DatabaseBackup,
   FileText,
@@ -34,6 +35,7 @@ import { logout, type ApiUser } from "@/lib/api";
 import { LOGO_SRC } from "@/lib/logo";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 interface NavItem {
   label: string;
@@ -47,8 +49,8 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Mirrors the role-aware admin sidebar of the legacy UI. In Slice 1
-// only "Overview" is a Next page; every other item points at the
+// Mirrors the role-aware admin sidebar of the legacy UI. Only
+// "Overview" is a Next page so far; every other item points at the
 // EXISTING legacy path, which the fallback rewrite proxies to Flask
 // — so each link genuinely works today.
 const NAV: NavGroup[] = [
@@ -119,51 +121,115 @@ const NAV: NavGroup[] = [
   },
 ];
 
+const COLLAPSE_KEY = "mycuvas-nav-collapsed";
+
+// Collapsed groups persist in localStorage. Loaded in an effect so
+// server and client render identically on first paint (all groups
+// open), then the stored preference applies — no hydration mismatch.
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(COLLAPSE_KEY);
+      if (raw) setCollapsed(JSON.parse(raw) as Record<string, boolean>);
+    } catch {
+      /* corrupted value — keep everything open */
+    }
+  }, []);
+  function toggle(label: string) {
+    setCollapsed((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode — preference simply won't persist */
+      }
+      return next;
+    });
+  }
+  return { collapsed, toggle };
+}
+
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { collapsed, toggle } = useCollapsedGroups();
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
-      {NAV.map((group, gi) => (
-        <div key={gi}>
-          {group.label ? (
-            <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/50">
-              {group.label}
-            </p>
-          ) : null}
-          <ul className="space-y-0.5">
-            {group.items.map((item) => {
-              const active = item.next && pathname === item.href;
-              const classes = cn(
-                "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                active
-                  ? "bg-white/10 font-semibold text-white shadow-[inset_3px_0_0_0_var(--color-accent)]"
-                  : "text-white/75 hover:bg-white/5 hover:text-white"
-              );
-              const inner = (
-                <>
-                  <item.icon className="h-4 w-4 shrink-0" aria-hidden />
-                  <span className="truncate">{item.label}</span>
-                </>
-              );
-              return (
-                <li key={item.label}>
-                  {item.next ? (
-                    <Link href={item.href} className={classes} onClick={onNavigate}>
-                      {inner}
-                    </Link>
-                  ) : (
-                    // Legacy page — a plain anchor so the browser does a
-                    // full load through the fallback proxy to Flask.
-                    <a href={item.href} className={classes} onClick={onNavigate}>
-                      {inner}
-                    </a>
+    <nav
+      aria-label="Main navigation"
+      className="scrollbar-thin flex-1 space-y-4 overflow-y-auto px-3 py-4"
+    >
+      {NAV.map((group, gi) => {
+        const isOpen = group.label === null || !collapsed[group.label];
+        return (
+          <div key={gi}>
+            {group.label ? (
+              <button
+                type="button"
+                onClick={() => toggle(group.label as string)}
+                aria-expanded={isOpen}
+                className="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wider text-white/50 transition-colors hover:text-white/80"
+              >
+                {group.label}
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform duration-200",
+                    !isOpen && "-rotate-90"
                   )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
+                  aria-hidden
+                />
+              </button>
+            ) : null}
+            {isOpen ? (
+              <ul className="animate-fade-in mt-1 space-y-0.5">
+                {group.items.map((item) => {
+                  const active = item.next && pathname === item.href;
+                  const classes = cn(
+                    "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-all duration-200",
+                    active
+                      ? "bg-white/10 font-semibold text-white"
+                      : "text-white/75 hover:bg-white/5 hover:text-white"
+                  );
+                  const inner = (
+                    <>
+                      {active ? (
+                        <span
+                          className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-gold"
+                          aria-hidden
+                        />
+                      ) : null}
+                      <item.icon
+                        className={cn(
+                          "h-4 w-4 shrink-0 transition-colors",
+                          active
+                            ? "text-gold"
+                            : "text-white/60 group-hover:text-white/90"
+                        )}
+                        aria-hidden
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </>
+                  );
+                  return (
+                    <li key={item.label}>
+                      {item.next ? (
+                        <Link href={item.href} className={classes} onClick={onNavigate}>
+                          {inner}
+                        </Link>
+                      ) : (
+                        // Legacy page — a plain anchor so the browser does a
+                        // full load through the fallback proxy to Flask.
+                        <a href={item.href} className={classes} onClick={onNavigate}>
+                          {inner}
+                        </a>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </div>
+        );
+      })}
     </nav>
   );
 }
@@ -176,15 +242,24 @@ function SidebarHeader() {
       <img
         src={LOGO_SRC}
         alt="Cholistan University of Veterinary and Animal Sciences, Bahawalpur"
-        className="h-auto w-full rounded bg-white p-1"
+        className="h-auto w-full rounded-lg bg-white p-1.5 shadow-sm"
       />
-      <p className="mt-3 text-base font-semibold leading-tight text-white">
+      <p className="mt-3 text-base font-semibold leading-tight tracking-tight text-white">
         MY CUVAS
       </p>
       <p className="text-xs text-white/60">University Management System</p>
       <div className="mt-3 h-0.5 w-10 rounded bg-gold" aria-hidden />
     </div>
   );
+}
+
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
 }
 
 export default function Shell({
@@ -213,20 +288,38 @@ export default function Shell({
   return (
     <div className="flex min-h-screen bg-appbg">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-navy-deep lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-[272px] shrink-0 flex-col bg-navy-deep shadow-pop lg:flex">
         <SidebarHeader />
         <SidebarNav />
+        <div className="border-t border-white/10 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gold/20 text-sm font-bold text-gold ring-1 ring-inset ring-gold/40"
+              aria-hidden
+            >
+              {initials(user.name) || "A"}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-white">
+                {user.name}
+              </span>
+              <span className="block truncate text-xs capitalize text-white/60">
+                {user.role}
+              </span>
+            </span>
+          </div>
+        </div>
       </aside>
 
       {/* Mobile sidebar (slide-over) */}
       {open ? (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="animate-fade-in absolute inset-0 bg-navy-deep/50 backdrop-blur-[1px]"
             onClick={() => setOpen(false)}
             aria-hidden
           />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-navy-deep shadow-xl">
+          <aside className="animate-drawer-in absolute inset-y-0 left-0 flex w-[272px] flex-col bg-navy-deep shadow-pop">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <SidebarHeader />
@@ -234,7 +327,7 @@ export default function Shell({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="m-2 rounded-md p-1.5 text-white/80 hover:bg-white/10"
+                className="m-2 rounded-md p-1.5 text-white/80 transition-colors hover:bg-white/10"
                 aria-label="Close menu"
               >
                 <X className="h-5 w-5" />
@@ -246,39 +339,68 @@ export default function Shell({
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-surface px-4 py-3 sm:px-6">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-surface/90 px-4 py-3 shadow-topbar backdrop-blur sm:px-6">
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="rounded-md p-1.5 text-faint hover:bg-appbg lg:hidden"
+            className="rounded-lg p-1.5 text-faint transition-colors hover:bg-appbg lg:hidden"
             aria-label="Open menu"
           >
             <Menu className="h-5 w-5" />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-navy">
-            {title}
-          </h1>
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium leading-tight text-ink">
-              {user.name}
-            </p>
-            <p className="text-xs capitalize leading-tight text-faint">
-              {user.role}
-            </p>
+          <div className="min-w-0 flex-1">
+            <nav
+              aria-label="Breadcrumb"
+              className="hidden text-xs text-faint sm:block"
+            >
+              <span>MY CUVAS</span>
+              <span className="mx-1.5" aria-hidden>
+                /
+              </span>
+              <span className="font-medium text-navy">{title}</span>
+            </nav>
+            <h1 className="truncate text-lg font-semibold tracking-tight text-navy">
+              {title}
+            </h1>
+          </div>
+          <div className="hidden items-center gap-2.5 md:flex">
+            <span
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-navy/10 text-sm font-bold text-navy ring-1 ring-inset ring-navy/15"
+              aria-hidden
+            >
+              {initials(user.name) || "A"}
+            </span>
+            <span className="text-right">
+              <span className="block text-sm font-medium leading-tight text-ink">
+                {user.name}
+              </span>
+              <span className="mt-0.5 block leading-tight">
+                <Badge variant="blue" className="capitalize">
+                  {user.role}
+                </Badge>
+              </span>
+            </span>
           </div>
           <Button
             variant="outline"
             size="sm"
             onClick={onSignOut}
             disabled={signingOut}
+            className="rounded-lg"
           >
             <LogOut className="mr-1.5 h-4 w-4" aria-hidden />
             Sign out
           </Button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+        <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6">
           {children}
         </main>
+        <footer className="border-t border-line px-4 py-4 sm:px-6">
+          <p className="mx-auto w-full max-w-[1280px] text-xs text-faint">
+            MY CUVAS — Cholistan University of Veterinary and Animal Sciences,
+            Bahawalpur · University Management System
+          </p>
+        </footer>
       </div>
     </div>
   );

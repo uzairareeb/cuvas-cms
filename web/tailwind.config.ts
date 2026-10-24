@@ -27,6 +27,8 @@ const config: Config = {
         success: "var(--color-success)",
         warning: "var(--color-warning)",
         error: "var(--color-error)",
+        // Alias so border-line / divide-line resolve to the token border.
+        line: "var(--color-border)",
         // shadcn/ui semantic tokens (HSL channel vars in globals.css)
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -69,6 +71,14 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      // Premium shadow scale — soft navy-tinted elevation, never grey mud.
+      boxShadow: {
+        card: "0 1px 2px rgba(23, 54, 93, 0.05), 0 6px 20px rgba(23, 54, 93, 0.06)",
+        "card-hover":
+          "0 2px 4px rgba(23, 54, 93, 0.06), 0 12px 28px rgba(23, 54, 93, 0.10)",
+        pop: "0 8px 30px rgba(15, 43, 76, 0.18)",
+        topbar: "0 1px 0 rgba(23, 54, 93, 0.06), 0 8px 24px rgba(23, 54, 93, 0.04)",
       },
     },
   },
