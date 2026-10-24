@@ -12,6 +12,7 @@ Expects a FRESH database (empty users table) so seeding + counts are
 exact. Env: DB_PATH=<fresh sqlite file>  OR  DATABASE_URL=<postgres uri>.
 Prints PASS/FAIL lines and exits non-zero if any check fails.
 """
+import os
 import sys
 
 from werkzeug.security import generate_password_hash
@@ -98,6 +99,40 @@ r = c.post("/api/v1/auth/login",
 check("API login with a matching Origin host passes the guard",
       envelope_ok(r))
 c.post("/api/v1/auth/logout", headers=HDR)  # reset the session again
+
+# --------------------------- trusted-origins allowlist (Next.js proxy)
+# The Next.js frontend's rewrite proxy forwards the browser's Origin,
+# which names the FRONTEND host, not Flask's — so the guard accepts a
+# present Origin whose full origin string is on the API_TRUSTED_ORIGINS
+# allowlist (env, comma-separated). Unset env = pre-allowlist behaviour.
+c8 = m.app.test_client()
+os.environ["API_TRUSTED_ORIGINS"] = "https://web.example.test"
+try:
+    r = c8.post("/api/v1/auth/login",
+                json={"username": "admin", "password": "Admin@123"},
+                headers={**HDR, "Origin": "https://web.example.test"})
+    check("allowlist set: trusted frontend Origin + header -> login 200",
+          envelope_ok(r))
+    c8.post("/api/v1/auth/logout", headers=HDR)
+    r = c8.post("/api/v1/auth/login",
+                json={"username": "admin", "password": "Admin@123"},
+                headers={**HDR, "Origin": "https://evil.example.test"})
+    check("allowlist set: untrusted foreign Origin -> still 403",
+          envelope_err(r, 403, "csrf_check_failed"))
+    r = c8.post("/api/v1/auth/login",
+                json={"username": "admin", "password": "Admin@123"},
+                headers={"Origin": "https://web.example.test"})
+    check("allowlist set: trusted Origin WITHOUT X-Requested-With -> 403",
+          envelope_err(r, 403, "csrf_check_failed"))
+finally:
+    del os.environ["API_TRUSTED_ORIGINS"]
+r = c8.post("/api/v1/auth/login",
+            json={"username": "admin", "password": "Admin@123"},
+            headers={**HDR, "Origin": "https://web.example.test"})
+check("allowlist unset: frontend Origin -> 403 (default unchanged)",
+      envelope_err(r, 403, "csrf_check_failed"))
+# (Case "same-host Origin passes" is covered by the CSRF section above:
+#  "API login with a matching Origin host passes the guard".)
 
 # -------------------------------------------------------------- bad input
 r = c.post("/api/v1/auth/login", data="{not json",

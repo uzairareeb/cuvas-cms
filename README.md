@@ -1348,6 +1348,17 @@ no business rule re-implemented.
   present its host must also match the request host. Violations →
   403 `csrf_check_failed`. (The legacy HTML forms keep their
   existing SameSite=Lax posture.)
+- **Trusted frontend origins (`API_TRUSTED_ORIGINS`):** an Origin
+  whose full origin string appears in this comma-separated
+  environment variable is also accepted. This exists because the
+  Next.js frontend's rewrite proxy forwards the browser's `Origin`
+  header, which names the frontend host rather than Flask's — without
+  the allowlist, first-party logins through the proxy were rejected
+  as cross-origin. Production sets `API_TRUSTED_ORIGINS` to the web
+  origin (`https://my-cuvas-web.vercel.app`). The
+  `X-Requested-With` header stays mandatory for every mutation,
+  origins not on the list still get 403, and with the variable unset
+  the guard behaves exactly as before (same-host only).
 - Future slices gate endpoints with `api_role_required(*roles)` —
   the JSON twin of `@role_required` (401/403 envelopes instead of a
   flash + redirect), defined in Slice 0 and applied to `/auth/me`.
@@ -1397,15 +1408,19 @@ legacy Flask UI is unchanged and remains the live system.
 
 ### Verification
 
-`verify_api_v1.py` — **50 checks, all passing on SQLite AND
+`verify_api_v1.py` — **54 checks, all passing on SQLite AND
 PostgreSQL**: the 30 Slice 0 checks plus dashboard checks —
 anonymous 401, student 403, accounts 403, admin 200 with every KPI
 equal to an independent direct-SQL ground truth (outstanding
 compared against a per-student ledger sum), by-program counts
 summing to the student total, by-session and all 8 approval-queue
-counts matching ground truth. All 14 legacy suites stay at the
-known baseline on both backends: **843 pass + the one accepted
-v0.11 exception**.
+counts matching ground truth — plus 4 trusted-origin checks for
+`API_TRUSTED_ORIGINS` (see Slice 0 §Contract): a listed frontend
+origin passes, an unlisted foreign origin still 403s, a listed
+origin without the `X-Requested-With` header still 403s, and with
+the variable unset the same frontend origin 403s (default
+unchanged). All 14 legacy suites stay at the known baseline on
+both backends: **843 pass + the one accepted v0.11 exception**.
 
 ### Frontend (`web/`)
 

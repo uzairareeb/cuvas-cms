@@ -8646,8 +8646,14 @@ def _api_v1_csrf_guard():
     browser; same-origin callers (the Next.js rewrite proxy, any
     first-party client) set the header and pass. On top of that, when
     an Origin (or Referer) header is present, its host must equal the
-    request host. Safe methods are not guarded. The legacy HTML forms
-    keep their existing SameSite=Lax posture — untouched."""
+    request host — unless the origin is on the API_TRUSTED_ORIGINS
+    allowlist (comma-separated full origins in the environment). That
+    exception exists for our own Next.js frontend: its rewrite proxy
+    forwards the browser's Origin, which names the frontend host, not
+    Flask's, so first-party traffic through the proxy would otherwise
+    be rejected. Foreign origins not on the list still fail here.
+    Safe methods are not guarded. The legacy HTML forms keep their
+    existing SameSite=Lax posture — untouched."""
     if not _is_api_request():
         return None
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
@@ -8657,9 +8663,17 @@ def _api_v1_csrf_guard():
                          "State-changing API requests must include the "
                          "'X-Requested-With: XMLHttpRequest' header.")
     origin = request.headers.get("Origin") or request.headers.get("Referer")
-    if origin and _api_urlsplit(origin).netloc != request.host:
-        return api_error(403, "csrf_check_failed",
-                         "Cross-origin API requests are not allowed.")
+    if origin:
+        parts = _api_urlsplit(origin)
+        origin_str = (f"{parts.scheme}://{parts.netloc}"
+                      if parts.scheme else origin)
+        trusted = {entry.strip() for entry in
+                   os.environ.get("API_TRUSTED_ORIGINS", "").split(",")
+                   if entry.strip()}
+        if (parts.netloc != request.host and origin not in trusted
+                and origin_str not in trusted):
+            return api_error(403, "csrf_check_failed",
+                             "Cross-origin API requests are not allowed.")
     return None
 
 
