@@ -6,11 +6,13 @@
 <main class="login-shell">
   <section class="login-form-side">
     <div class="login-form-inner">
+      {% set _portal = request.args.get('portal', '') %}
+      {% set _demos = {'admin': ('Admin', 'admin', 'Admin@123'), 'student': ('Student', 'student', 'Student@123'), 'faculty': ('Faculty', 'faculty', 'Faculty@123'), 'accounts': ('Accounts Office', 'accounts', 'Accounts@123'), 'coe': ('Controller of Examinations', 'coe', 'Coe@123')} %}
       <img class="login-logo" src="{{ url_for('cuvas_logo') }}" alt="CUVAS — Cholistan University of Veterinary and Animal Sciences, Bahawalpur" width="315" height="160">
       <h1>Welcome Back!</h1>
       <p class="login-welcome">Welcome back! Sign in to access your university account and academic services.</p>
       {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}{% for cat, m in msgs %}<div class="login-flash {{ cat }}" role="alert">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
-      <form method="post" action="{{ url_for('login') }}" class="login-form">
+      <form method="post" action="{{ url_for('login', portal=_portal) if _portal in _demos else url_for('login') }}" class="login-form">
         <label class="login-field">
           <span class="login-field-label">Username</span>
           <span class="login-input-wrap">
@@ -28,13 +30,14 @@
         </label>
         <button class="login-submit" type="submit">Log in</button>
       </form>
+      {% if _portal in _demos %}{% set _d = _demos[_portal] %}
       <div class="login-demo">
-        <p class="login-demo-title">Demo credentials — tap to fill:</p>
+        <p class="login-demo-title">Demo credentials — {{ _d[0] }} portal (tap to fill):</p>
         <div class="login-demo-row">
-          <button type="button" class="login-demo-chip" data-user="admin" data-pass="Admin@123">Admin · <code>admin</code> / <code>Admin@123</code></button>
-          <button type="button" class="login-demo-chip" data-user="student" data-pass="Student@123">Student · <code>student</code> / <code>Student@123</code></button>
+          <button type="button" class="login-demo-chip" data-user="{{ _d[1] }}" data-pass="{{ _d[2] }}">{{ _d[0] }} · <code>{{ _d[1] }}</code> / <code>{{ _d[2] }}</code></button>
         </div>
       </div>
+      {% endif %}
       <p class="login-home"><a href="{{ url_for('landing') }}">&larr; Back to homepage</a></p>
     </div>
   </section>

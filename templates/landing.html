@@ -13,31 +13,31 @@
   <h2 class="lp-section-title">Choose your portal</h2>
   <p class="lp-section-sub">Select your portal below to sign in.</p>
   <div class="lp-grid">
-    <a class="lp-card" href="{{ url_for('login') }}">
+    <a class="lp-card" href="{{ url_for('login', portal='admin') }}">
       <span class="lp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
       <h3>Admin</h3>
       <p>Manage students, programs, fees and the whole campus from one dashboard.</p>
       <span class="lp-card-action">Login &rarr;</span>
     </a>
-    <a class="lp-card" href="{{ url_for('login') }}">
+    <a class="lp-card" href="{{ url_for('login', portal='student') }}">
       <span class="lp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4"/><path d="M22 9v5"/></svg></span>
       <h3>Student</h3>
       <p>View your profile, fee vouchers, results, attendance and campus services.</p>
       <span class="lp-card-action">Login &rarr;</span>
     </a>
-    <a class="lp-card" href="{{ url_for('login') }}">
+    <a class="lp-card" href="{{ url_for('login', portal='faculty') }}">
       <span class="lp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6C10 4.5 7 4 4 4v14c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2z"/><path d="M12 6v14"/></svg></span>
       <h3>Faculty</h3>
       <p>Mark attendance, enter marks and view your classes and timetable.</p>
       <span class="lp-card-action">Login &rarr;</span>
     </a>
-    <a class="lp-card" href="{{ url_for('login') }}">
+    <a class="lp-card" href="{{ url_for('login', portal='accounts') }}">
       <span class="lp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg></span>
       <h3>Accounts Office</h3>
       <p>Verify fee vouchers, manage payments and track the student ledger.</p>
       <span class="lp-card-action">Login &rarr;</span>
     </a>
-    <a class="lp-card" href="{{ url_for('login') }}">
+    <a class="lp-card" href="{{ url_for('login', portal='coe') }}">
       <span class="lp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/><path d="M9 13l2 2 4-4"/></svg></span>
       <h3>Controller of Examinations</h3>
       <p>Manage examinations, results, transcripts and roll number slips.</p>
