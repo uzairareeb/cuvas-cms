@@ -1,8 +1,8 @@
 /* MY CUVAS home page only — royal-blue scheme matching the login page. Not imported elsewhere. */
 *, *::before, *::after { box-sizing: border-box; }
 :root {
-  --lp-blue: #1d4ed8;
-  --lp-blue-dark: #1e40af;
+  --lp-blue: #2e3192;
+  --lp-blue-dark: #252775;
   --lp-ink: #1e293b;
   --lp-muted: #64748b;
   --lp-border: #e2e8f0;
@@ -36,9 +36,9 @@ body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, 
 .lp-flash { border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.5; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
 .lp-flash.ok { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
 
-/* Hero: royal blue, white text. */
+/* Hero: indigo, white text. */
 .lp-hero {
-  background: linear-gradient(120deg, #1d4ed8 0%, #1e40af 100%);
+  background: linear-gradient(120deg, #2e3192 0%, #252775 100%);
   text-align: center;
   padding: 68px 22px 60px;
   animation: lp-up .3s ease both;
@@ -101,9 +101,9 @@ body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, 
 .lp-card:hover {
   transform: translateY(-4px);
   border-color: var(--lp-blue);
-  box-shadow: 0 14px 28px rgba(29, 78, 216, .16);
+  box-shadow: 0 14px 28px rgba(46, 49, 146, .16);
 }
-.lp-card:focus-visible { outline: 3px solid rgba(29, 78, 216, .35); outline-offset: 2px; }
+.lp-card:focus-visible { outline: 3px solid rgba(46, 49, 146, .35); outline-offset: 2px; }
 .lp-icon {
   display: inline-flex;
   align-items: center;
@@ -111,7 +111,7 @@ body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, 
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: #eef4ff;
+  background: #eef0fa;
   color: var(--lp-blue);
   margin-bottom: 14px;
 }
