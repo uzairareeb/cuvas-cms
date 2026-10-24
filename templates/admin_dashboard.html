@@ -10,9 +10,9 @@
         <button class="dash-bell" id="dash-bell-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Recent activity notifications" title="Recent activity notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button>
         <div class="dash-bell-panel" id="dash-bell-panel" hidden aria-label="Recent activity notifications">
           <p class="dash-bell-title">Recent activity</p>
-          {% if recent_activity %}
+          {% if bell_notifications %}
           <ul class="dash-bell-list">
-            {% for a in recent_activity %}<li class="dash-bell-item">
+            {% for a in bell_notifications %}<li class="dash-bell-item">
               <span class="dash-feed-icon">{% if 'login' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{% elif 'notification' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>{% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>{% endif %}</span>
               <span class="dash-feed-main"><span class="dash-feed-text">{{ a['details'] or a['action'] }}</span><span class="dash-feed-meta">{{ a['username'] or '' }}{% if a['username'] %} &middot; {% endif %}{{ a['created_at'] or '' }}</span></span>
             </li>{% endfor %}

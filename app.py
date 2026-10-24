@@ -1521,6 +1521,18 @@ def admin_dashboard():
     # Real activity: latest audit rows + latest announcements
     recent_activity = db.execute(
         "SELECT * FROM audit_log ORDER BY id DESC LIMIT 8").fetchall()
+    # Bell notifications: TASK actions only — auth noise (sign-ins,
+    # sign-outs, failed/locked attempts) and announcement-management
+    # actions are excluded, so the bell never shows sign-in/logout
+    # rows nor the official announcements themselves. Same 8-item
+    # window, scanned back past the excluded rows.
+    bell_notifications = db.execute(
+        "SELECT * FROM audit_log WHERE action NOT IN "
+        "('login_success','login_failed','login_locked','logout',"
+        "'notification_published','notification_created',"
+        "'notification_updated','notification_deleted',"
+        "'notification_unpublished') "
+        "ORDER BY id DESC LIMIT 8").fetchall()
     recent_notifications = db.execute(
         "SELECT id, title, body, published_at FROM notifications ORDER BY id DESC LIMIT 5").fetchall()
     sessions_count = _count("SELECT COUNT(*) c FROM academic_sessions")
@@ -1539,6 +1551,7 @@ def admin_dashboard():
                            gpa_by_semester=gpa_by_semester,
                            attendance=attendance,
                            recent_activity=recent_activity,
+                           bell_notifications=bell_notifications,
                            recent_notifications=recent_notifications,
                            sessions_count=sessions_count,
                            courses_count=courses_count,
