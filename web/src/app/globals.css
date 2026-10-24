@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* MY CUVAS design tokens — navy / white / subtle gold.
+   Palette DECIDED by the user for the Next.js frontend
+   (2026-10-24, migration Slice 1; plan §2.7 decision 1).
+   Components use the Tailwind names mapped in tailwind.config.ts —
+   never raw hex outside this file.
+
+   Brand anchors:
+     Primary navy   #17365D   Deep sidebar navy #0F2B4C
+     Secondary blue #2457A7   Gold accent       #E7B34C
+     App background #F4F7FB   Surface           #FFFFFF
+     Text           #1E293B   Muted text        #64748B
+     Border         #E2E8F0
+*/
+:root {
+  --color-primary: #17365d;
+  --color-navy-deep: #0f2b4c;
+  --color-secondary: #2457a7;
+  --color-accent: #e7b34c;
+  --color-background: #f4f7fb;
+  --color-surface: #ffffff;
+  --color-foreground: #1e293b;
+  --color-muted: #64748b;
+  --color-border: #e2e8f0;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-error: #dc2626;
+  --font-sans: var(--font-inter), "Inter", ui-sans-system, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* shadcn/ui semantic variables (HSL channels) */
+  --background: 216 44% 97%;
+  --foreground: 217 33% 17%;
+  --card: 0 0% 100%;
+  --card-foreground: 217 33% 17%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 217 33% 17%;
+  --primary: 214 57% 23%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 216 14% 93%;
+  --secondary-foreground: 214 57% 23%;
+  --muted: 216 14% 93%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 41 76% 60%;
+  --accent-foreground: 217 33% 17%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 215 66% 40%;
+  --radius: 0.5rem;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
