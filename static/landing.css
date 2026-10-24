@@ -1,0 +1,166 @@
+/* MY CUVAS home page only — royal-blue scheme matching the login page. Not imported elsewhere. */
+:root {
+  --lp-blue: #1d4ed8;
+  --lp-blue-dark: #1e40af;
+  --lp-ink: #1e293b;
+  --lp-muted: #64748b;
+  --lp-border: #e2e8f0;
+  --lp-bg: #f5f7fa;
+}
+
+/* Shared chrome restyled on this page only (this sheet loads only on /). */
+.topbar {
+  background: linear-gradient(90deg, #1d4ed8, #1e40af) !important;
+  box-shadow: 0 2px 12px rgba(29, 78, 216, .25);
+}
+.topbar .badge { background: #fff !important; color: #1e40af !important; }
+footer { color: var(--lp-muted); }
+
+/* Hero */
+.lp-hero {
+  background: linear-gradient(180deg, #eef4ff 0%, #ffffff 100%);
+  text-align: center;
+  padding: 64px 22px 56px;
+  animation: lp-up .3s ease both;
+}
+.lp-eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--lp-blue);
+  margin: 0 0 14px;
+}
+.lp-title {
+  font-size: 52px;
+  line-height: 1.1;
+  margin: 0 0 6px;
+  font-weight: 800;
+  letter-spacing: .01em;
+  color: var(--lp-ink);
+}
+.lp-title span { color: var(--lp-blue); }
+.lp-subtitle {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--lp-ink);
+  margin: 0 0 14px;
+}
+.lp-lead {
+  max-width: 640px;
+  margin: 0 auto 26px;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--lp-muted);
+}
+.lp-btn {
+  display: inline-block;
+  background: var(--lp-blue);
+  color: #fff !important;
+  padding: 13px 32px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 16px;
+  text-decoration: none;
+  box-shadow: 0 8px 20px rgba(29, 78, 216, .30);
+  transition: background .2s ease, transform .15s ease, box-shadow .2s ease;
+}
+.lp-btn:hover { background: var(--lp-blue-dark); box-shadow: 0 10px 24px rgba(29, 78, 216, .35); }
+.lp-btn:active { transform: translateY(1px); }
+.lp-btn:focus-visible { outline: 3px solid rgba(29, 78, 216, .35); outline-offset: 2px; }
+
+/* Portal cards */
+.lp-portals { max-width: 1060px; margin: 0 auto; padding: 48px 22px 24px; }
+.lp-section-title {
+  text-align: center;
+  font-size: 26px;
+  margin: 0 0 8px;
+  color: var(--lp-ink);
+  animation: lp-up .3s ease both .05s;
+}
+.lp-section-sub {
+  text-align: center;
+  color: var(--lp-muted);
+  margin: 0 0 28px;
+  font-size: 15px;
+  animation: lp-up .3s ease both .05s;
+}
+.lp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+.lp-card {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--lp-border);
+  border-radius: 16px;
+  padding: 24px 22px;
+  text-decoration: none;
+  color: var(--lp-ink);
+  box-shadow: 0 2px 10px rgba(30, 41, 59, .06);
+  opacity: 0;
+  animation: lp-up .3s ease both;
+  transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+}
+.lp-card:nth-child(1) { animation-delay: .08s; }
+.lp-card:nth-child(2) { animation-delay: .14s; }
+.lp-card:nth-child(3) { animation-delay: .20s; }
+.lp-card:nth-child(4) { animation-delay: .26s; }
+.lp-card:nth-child(5) { animation-delay: .32s; }
+.lp-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--lp-blue);
+  box-shadow: 0 14px 28px rgba(29, 78, 216, .16);
+}
+.lp-card:focus-visible { outline: 3px solid rgba(29, 78, 216, .35); outline-offset: 2px; }
+.lp-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #eef4ff;
+  color: var(--lp-blue);
+  margin-bottom: 16px;
+}
+.lp-icon svg { width: 26px; height: 26px; display: block; }
+.lp-card h3 { font-size: 18px; margin: 0 0 8px; }
+.lp-card p { font-size: 14px; line-height: 1.6; color: var(--lp-muted); margin: 0 0 16px; }
+.lp-card-action { font-size: 14px; font-weight: 700; color: var(--lp-blue); }
+.lp-note {
+  text-align: center;
+  color: var(--lp-muted);
+  font-size: 14px;
+  margin: 26px 0 8px;
+}
+.lp-demo {
+  max-width: 1060px;
+  margin: 12px auto 28px;
+  background: var(--lp-bg);
+  border: 1px solid var(--lp-border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--lp-ink);
+}
+
+@keyframes lp-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 640px) {
+  .lp-hero { padding: 44px 18px 40px; }
+  .lp-title { font-size: 38px; }
+  .lp-subtitle { font-size: 18px; }
+  .lp-portals { padding: 36px 18px 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero, .lp-section-title, .lp-section-sub, .lp-card { animation: none; opacity: 1; }
+  .lp-card, .lp-btn { transition: none; }
+  .lp-card:hover { transform: none; }
+}
