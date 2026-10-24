@@ -1446,8 +1446,103 @@ def admin_dashboard():
            LEFT JOIN programs p ON p.id=s.program_id ORDER BY s.id DESC LIMIT 6""").fetchall()
     pending = db.execute(
         "SELECT v.*, s.name student_name FROM vouchers v JOIN students s ON s.id=v.student_id WHERE v.status IN ('Pending','Proof Submitted') ORDER BY v.id DESC").fetchall()
+    # --- premium dashboard additions: ADDED variables only, no behaviour change ---
+    def _count(sql, args=()):
+        return db.execute(sql, args).fetchone()["c"]
+    # Faculty & Staff: active faculty + staff logins (admin/accounts/coe roles)
+    faculty_staff = (
+        _count("SELECT COUNT(*) c FROM faculty WHERE COALESCE(is_active,1)=1")
+        + _count("SELECT COUNT(*) c FROM users WHERE role IN ('admin','accounts','coe') AND COALESCE(is_active,1)=1"))
+    # New Admissions: students in their first semester (no created_at column exists)
+    new_admissions = _count(
+        "SELECT COUNT(*) c FROM students WHERE current_semester=1")
+    # Fee Collection vs Outstanding: append-only ledger sums (same semantics as
+    # the Fee Collection report's ledger totals)
+    fee_agg = db.execute(
+        "SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c FROM ledger_entries").fetchone()
+    fee_collected = fee_agg["c"] or 0
+    fee_outstanding = (fee_agg["d"] or 0) - fee_collected
+    # Pending-approval queues (real workflow counts, each linking to its page)
+    queues = [
+        {"label": "Voucher proofs", "count": _count(
+            "SELECT COUNT(*) c FROM vouchers WHERE status='Proof Submitted'"),
+         "url": "/admin/vouchers", "note": "Proofs awaiting verification"},
+        {"label": "Pending vouchers", "count": _count(
+            "SELECT COUNT(*) c FROM vouchers WHERE status='Pending'"),
+         "url": "/admin/vouchers", "note": "Vouchers awaiting payment"},
+        {"label": "Documents", "count": _count(
+            "SELECT COUNT(*) c FROM student_documents WHERE status='Pending'"),
+         "url": "/admin/documents", "note": "Documents awaiting review"},
+        {"label": "Tickets", "count": _count(
+            "SELECT COUNT(*) c FROM tickets WHERE status='Open'"),
+         "url": "/admin/tickets", "note": "Open support tickets"},
+        {"label": "Clearance", "count": _count(
+            "SELECT COUNT(*) c FROM clearance_requests WHERE status='In Progress'"),
+         "url": "/admin/clearance", "note": "Clearance requests in progress"},
+        {"label": "Scholarships", "count": _count(
+            "SELECT COUNT(*) c FROM scholarship_applications WHERE status='Applied'"),
+         "url": "/admin/scholarships", "note": "Applications awaiting decision"},
+        {"label": "Societies", "count": _count(
+            "SELECT COUNT(*) c FROM society_members WHERE status='Requested'"),
+         "url": "/admin/societies", "note": "Membership requests"},
+        {"label": "Vehicle passes", "count": _count(
+            "SELECT COUNT(*) c FROM vehicle_passes WHERE status='Requested'"),
+         "url": "/admin/vehicle-passes", "note": "Pass requests awaiting decision"},
+        {"label": "Course repeats", "count": _count(
+            "SELECT COUNT(*) c FROM repeat_requests WHERE status='Requested'"),
+         "url": "/admin/repeat", "note": "Repeat requests awaiting decision"},
+    ]
+    pending_approvals = sum(q["count"] for q in queues)
+    # Analytics aggregates (real data only)
+    students_by_program = db.execute(
+        """SELECT p.name name, COUNT(*) c FROM students s
+           JOIN programs p ON p.id=s.program_id
+           GROUP BY p.id, p.name ORDER BY c DESC""").fetchall()
+    students_by_department = db.execute(
+        """SELECT d.name name, COUNT(*) c FROM students s
+           JOIN departments d ON d.id=s.department_id
+           GROUP BY d.id, d.name ORDER BY c DESC""").fetchall()
+    # NOTE: no ROUND() in SQL — Postgres has no round(double, int); round in
+    # Python so this works identically on SQLite and Postgres.
+    gpa_by_semester = [
+        {"sem": r["sem"],
+         "avg_gp": round(float(r["avg_gp"]), 2) if r["avg_gp"] is not None else None,
+         "c": r["c"]}
+        for r in db.execute(
+            """SELECT semester_no sem, AVG(grade_point) avg_gp,
+                      COUNT(*) c FROM results WHERE grade_point IS NOT NULL
+               GROUP BY semester_no ORDER BY semester_no""").fetchall()]
+    att = db.execute(
+        """SELECT COUNT(*) t,
+                  COALESCE(SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END),0) p
+           FROM attendance""").fetchone()
+    attendance = {"total": att["t"] or 0, "present": att["p"] or 0,
+                  "pct": round(100.0 * (att["p"] or 0) / att["t"], 1) if att["t"] else None}
+    # Real activity: latest audit rows + latest announcements
+    recent_activity = db.execute(
+        "SELECT * FROM audit_log ORDER BY id DESC LIMIT 8").fetchall()
+    recent_notifications = db.execute(
+        "SELECT id, title, body, published_at FROM notifications ORDER BY id DESC LIMIT 5").fetchall()
+    sessions_count = _count("SELECT COUNT(*) c FROM academic_sessions")
+    courses_count = _count("SELECT COUNT(*) c FROM courses")
+    today_display = datetime.date.today().strftime("%A, %d %B %Y")
     return render_template("admin_dashboard.html", kpis=kpis,
-                           recent_students=recent_students, pending=pending)
+                           recent_students=recent_students, pending=pending,
+                           faculty_staff=faculty_staff,
+                           new_admissions=new_admissions,
+                           fee_collected=fee_collected,
+                           fee_outstanding=fee_outstanding,
+                           pending_approvals=pending_approvals,
+                           queues=queues,
+                           students_by_program=students_by_program,
+                           students_by_department=students_by_department,
+                           gpa_by_semester=gpa_by_semester,
+                           attendance=attendance,
+                           recent_activity=recent_activity,
+                           recent_notifications=recent_notifications,
+                           sessions_count=sessions_count,
+                           courses_count=courses_count,
+                           today_display=today_display)
 
 
 # ------------------------------------------------- staff office landings (v0.15)

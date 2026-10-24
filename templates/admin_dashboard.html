@@ -1,15 +1,170 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<h2>Admin Dashboard</h2><p class="muted">Welcome, {{ session.display_name }} — demo overview of MY CUVAS.</p>
-<div class="grid">
-<div class="card kpi"><div class="num">{{ kpis.students }}</div><div class="lbl">Students</div></div>
-<div class="card kpi teal"><div class="num">{{ kpis.departments }}</div><div class="lbl">Departments</div></div>
-<div class="card kpi gold"><div class="num">{{ kpis.programs }}</div><div class="lbl">Programs</div></div>
-<div class="card kpi red"><div class="num">{{ kpis.pending_vouchers }}</div><div class="lbl">Pending Vouchers</div></div>
+{% block admin_body %}<div class="dash">
+  <div class="dash-head">
+    <div class="dash-head-text">
+      <h2 class="dash-greet">Welcome back, {{ session.display_name }}</h2>
+      <p class="dash-sub">Here&rsquo;s what&rsquo;s happening across MY CUVAS today &middot; {{ today_display }}</p>
+    </div>
+    <div class="dash-head-actions">
+      <a class="dash-bell" href="{{ url_for('admin_notifications') }}" title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></a>
+      <button class="dash-refresh" id="dash-refresh" type="button"><svg id="dash-refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg><span>Refresh</span></button>
+    </div>
+  </div>
+
+  <div class="dash-kpis">
+    <a class="dash-kpi" href="{{ url_for('admin_students') }}">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">Total Students</span><span class="dash-kpi-value">{{ kpis.students }}</span><span class="dash-kpi-desc">Enrolled across all programs</span></span>
+    </a>
+    <a class="dash-kpi" href="{{ url_for('admin_faculty') }}">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4"/><path d="M22 9v5"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">Faculty &amp; Staff</span><span class="dash-kpi-value">{{ faculty_staff }}</span><span class="dash-kpi-desc">Active faculty plus staff logins</span></span>
+    </a>
+    <a class="dash-kpi" href="{{ url_for('admin_students') }}">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">New Admissions</span><span class="dash-kpi-value">{{ new_admissions }}</span><span class="dash-kpi-desc">Students in semester 1</span></span>
+    </a>
+    <a class="dash-kpi" href="{{ url_for('admin_report_fees') }}">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">Fee Collection</span><span class="dash-kpi-value">Rs {{ "{:,}".format(fee_collected) }}</span><span class="dash-kpi-desc">Total payments recorded</span></span>
+    </a>
+    <a class="dash-kpi" href="{{ url_for('admin_report_fees') }}">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M5 7h14M5 17h14"/><path d="M8 3h8"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">Outstanding Fee Dues</span><span class="dash-kpi-value">Rs {{ "{:,}".format(fee_outstanding) }}</span><span class="dash-kpi-desc">Charged minus collected</span></span>
+    </a>
+    <a class="dash-kpi" href="#dash-approvals">
+      <span class="dash-kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+      <span class="dash-kpi-body"><span class="dash-kpi-title">Pending Approvals</span><span class="dash-kpi-value">{{ pending_approvals }}</span><span class="dash-kpi-desc">Items waiting across all queues</span></span>
+    </a>
+  </div>
+
+  <div class="dash-mini">
+    <a class="dash-mini-item" href="{{ url_for('admin_departments') }}"><span class="dash-mini-value">{{ kpis.departments }}</span><span class="dash-mini-label">Departments</span></a>
+    <a class="dash-mini-item" href="{{ url_for('admin_programs') }}"><span class="dash-mini-value">{{ kpis.programs }}</span><span class="dash-mini-label">Programs</span></a>
+    <a class="dash-mini-item" href="{{ url_for('admin_sessions') }}"><span class="dash-mini-value">{{ sessions_count }}</span><span class="dash-mini-label">Sessions</span></a>
+    <a class="dash-mini-item" href="{{ url_for('admin_courses') }}"><span class="dash-mini-value">{{ courses_count }}</span><span class="dash-mini-label">Courses</span></a>
+  </div>
+
+  <div class="dash-grid">
+    <section class="dash-card">
+      <h3 class="dash-card-title">Students by Program</h3>
+      {% if students_by_program %}
+      {% set _maxp = students_by_program[0]['c'] %}
+      <div class="dash-bars">
+        {% for row in students_by_program %}<div class="dash-bar-row"><span class="dash-bar-label">{{ row['name'] }}</span><span class="dash-bar-track"><span class="dash-bar-fill" style="width:{{ (row['c'] * 100 / _maxp)|round(1) if _maxp else 0 }}%"></span></span><span class="dash-bar-value">{{ row['c'] }}</span></div>{% endfor %}
+      </div>
+      {% else %}<p class="dash-empty">No program enrolment data yet.</p>{% endif %}
+    </section>
+    <section class="dash-card">
+      <h3 class="dash-card-title">Fee Collection vs Outstanding</h3>
+      {% set _feetotal = fee_collected + fee_outstanding %}
+      {% if _feetotal > 0 %}
+      {% set _pct = (fee_collected * 100 / _feetotal)|round(1) %}
+      <div class="dash-donut-wrap">
+        <svg class="dash-donut" viewBox="0 0 180 180" role="img" aria-label="Fee collection {{ _pct }} percent">
+          <circle cx="90" cy="90" r="70" fill="none" stroke="#e2e8f0" stroke-width="22"/>
+          <circle cx="90" cy="90" r="70" fill="none" stroke="#1d4ed8" stroke-width="22" stroke-linecap="round" stroke-dasharray="{{ (_pct * 4.398)|round(1) }} 439.8" transform="rotate(-90 90 90)"/>
+        </svg>
+        <div class="dash-donut-center"><span class="dash-donut-pct">{{ _pct }}%</span><span class="dash-donut-sub">collected</span></div>
+      </div>
+      <ul class="dash-legend">
+        <li><span class="dash-dot blue"></span>Collected &mdash; Rs {{ "{:,}".format(fee_collected) }}</li>
+        <li><span class="dash-dot pale"></span>Outstanding &mdash; Rs {{ "{:,}".format(fee_outstanding) }}</li>
+      </ul>
+      {% else %}<p class="dash-empty">No fee ledger entries yet.</p>{% endif %}
+    </section>
+    <section class="dash-card">
+      <h3 class="dash-card-title">Students by Department</h3>
+      {% if students_by_department %}
+      {% set _maxd = students_by_department[0]['c'] %}
+      <div class="dash-bars">
+        {% for row in students_by_department %}<div class="dash-bar-row"><span class="dash-bar-label">{{ row['name'] }}</span><span class="dash-bar-track"><span class="dash-bar-fill alt" style="width:{{ (row['c'] * 100 / _maxd)|round(1) if _maxd else 0 }}%"></span></span><span class="dash-bar-value">{{ row['c'] }}</span></div>{% endfor %}
+      </div>
+      {% else %}<p class="dash-empty">No department enrolment data yet.</p>{% endif %}
+    </section>
+    <section class="dash-card">
+      <h3 class="dash-card-title">Academic Performance &mdash; Average GPA by Semester</h3>
+      {% if gpa_by_semester %}
+      {% set _maxg = 4.0 %}
+      <div class="dash-cols">
+        {% for row in gpa_by_semester %}<div class="dash-col"><span class="dash-col-value">{{ row['avg_gp'] }}</span><span class="dash-col-bar" style="height:{{ (row['avg_gp'] * 100 / _maxg)|round(1) }}%"></span><span class="dash-col-label">Sem {{ row['sem'] }}</span><span class="dash-col-sub">{{ row['c'] }} results</span></div>{% endfor %}
+      </div>
+      {% else %}<p class="dash-empty">No graded results yet.</p>{% endif %}
+      {% if attendance.total > 0 %}
+      <div class="dash-att">
+        <div class="dash-att-head"><span>Attendance recorded</span><strong>{{ attendance.pct }}% present</strong></div>
+        <div class="dash-att-track"><span class="dash-att-fill" style="width:{{ attendance.pct }}%"></span></div>
+        <p class="dash-att-sub">{{ attendance.present }} present of {{ attendance.total }} marked records.</p>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="dash-grid">
+    <section class="dash-card" id="dash-approvals">
+      <h3 class="dash-card-title">Pending Approvals &mdash; Action Center</h3>
+      {% if pending_approvals > 0 %}
+      <ul class="dash-queues">
+        {% for q in queues %}{% if q.count > 0 %}<li class="dash-queue"><span class="dash-queue-main"><span class="dash-queue-label">{{ q.label }}</span><span class="dash-queue-note">{{ q.note }}</span></span><span class="dash-queue-count">{{ q.count }}</span><a class="dash-queue-link" href="{{ q.url }}">Review &rarr;</a></li>{% endif %}{% endfor %}
+      </ul>
+      {% else %}<p class="dash-empty">All clear &mdash; no items waiting for approval.</p>{% endif %}
+    </section>
+    <section class="dash-card">
+      <h3 class="dash-card-title">Recent Activity</h3>
+      {% if recent_activity %}
+      <ul class="dash-feed">
+        {% for a in recent_activity %}<li class="dash-feed-item">
+          <span class="dash-feed-icon">{% if 'login' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{% elif 'notification' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>{% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>{% endif %}</span>
+          <span class="dash-feed-main"><span class="dash-feed-text">{{ a['details'] or a['action'] }}</span><span class="dash-feed-meta">{{ a['username'] or '' }}{% if a['username'] %} &middot; {% endif %}{{ a['created_at'] or '' }}</span></span>
+        </li>{% endfor %}
+      </ul>
+      <p class="dash-card-foot"><a href="{{ url_for('admin_audit') }}">View All Activity &rarr;</a></p>
+      {% else %}<p class="dash-empty">No recent activity recorded.</p>{% endif %}
+    </section>
+  </div>
+
+  <section class="dash-card">
+    <h3 class="dash-card-title">Quick Actions</h3>
+    <div class="dash-actions">
+      <a class="dash-action" href="{{ url_for('admin_student_new') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/><path d="M19 8v6M16 11h6"/></svg></span><span>Add Student</span></a>
+      <a class="dash-action" href="{{ url_for('admin_faculty_new') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4"/><path d="M22 9v5"/></svg></span><span>Register Faculty</span></a>
+      <a class="dash-action" href="{{ url_for('admin_students') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/><path d="M9 13l2 2 4-4"/></svg></span><span>Review Students</span></a>
+      <a class="dash-action" href="{{ url_for('admin_voucher_generate') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2.5 2.5 0 0 0 0 5v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2.5 2.5 0 0 0 0-5V7z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg></span><span>Generate Fee Voucher</span></a>
+      <a class="dash-action" href="{{ url_for('admin_report_fees') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/></svg></span><span>View Fee Reports</span></a>
+      <a class="dash-action" href="{{ url_for('admin_results') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg></span><span>Manage Results</span></a>
+      <a class="dash-action" href="{{ url_for('admin_notification_new') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l14-5v12L3 13v-2z"/><path d="M11 16a2 2 0 0 0 2 2 2 2 0 0 0 2-2"/><path d="M17 8a5 5 0 0 1 0 8"/></svg></span><span>Publish Announcement</span></a>
+      <a class="dash-action" href="{{ url_for('admin_reports') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V12M10 20V6M16 20v-8M22 20H2"/></svg></span><span>Generate Reports</span></a>
+    </div>
+  </section>
+
+  <div class="dash-grid">
+    <section class="dash-card">
+      <h3 class="dash-card-title">Recent Students</h3>
+      <table class="dash-table"><tr><th>Reg. No</th><th>Name</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th></tr>
+      {% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td></tr>{% else %}<tr><td colspan="6">No students yet.</td></tr>{% endfor %}</table>
+      <p class="dash-card-foot"><a href="{{ url_for('admin_students') }}">View all students &rarr;</a></p>
+    </section>
+    <section class="dash-card">
+      <h3 class="dash-card-title">Latest Announcements</h3>
+      {% if recent_notifications %}
+      <ul class="dash-notes">
+        {% for n in recent_notifications %}<li class="dash-note"><span class="dash-note-title">{{ n['title'] }}</span><span class="dash-note-body">{{ n['body'] }}</span><span class="dash-note-meta">{{ n['published_at'] or '' }}</span></li>{% endfor %}
+      </ul>
+      <p class="dash-card-foot"><a href="{{ url_for('admin_notifications') }}">View all notifications &rarr;</a></p>
+      {% else %}<p class="dash-empty">No announcements published yet.</p>{% endif %}
+    </section>
+  </div>
 </div>
-<h3 style="margin-top:26px">Pending Vouchers</h3>
-<table><tr><th>Challan #</th><th>Student</th><th>Title</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th></tr>
-{% for v in pending %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}</td><td>{{ v.title }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td><td><span class="pill pending">{{ v.status }}</span></td></tr>{% else %}<tr><td colspan="6">No pending vouchers.</td></tr>{% endfor %}</table>
-<h3 style="margin-top:26px">Recent Students</h3>
-<table><tr><th>Reg. No</th><th>Name</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th></tr>
-{% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td></tr>{% endfor %}</table>
+<script>
+(function () {
+  var btn = document.getElementById('dash-refresh');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    var icon = document.getElementById('dash-refresh-icon');
+    if (icon) icon.classList.add('dash-spin');
+    window.location.reload();
+  });
+})();
+</script>
 {% endblock %}
