@@ -8758,6 +8758,133 @@ def api_v1_logout():
     return api_ok({})
 
 
+@app.route("/api/v1/admin/dashboard")
+@api_role_required("admin")
+def api_v1_admin_dashboard():
+    """Read-only admin dashboard aggregate for the Next.js shell
+    (migration Slice 1). Every figure comes from the SAME tables and
+    helpers the HTML admin screens use — the KPI counts mirror
+    admin_dashboard(), the outstanding total is the ledger sum behind
+    student_outstanding(), and each approval queue counts exactly the
+    rows its legacy admin page lists as awaiting action. Amounts are
+    numbers; hrefs point at the existing legacy pages for each queue.
+    Nothing here writes."""
+    db = get_db()
+    kpis = {
+        "total_students": db.execute(
+            "SELECT COUNT(*) c FROM students").fetchone()["c"],
+        "active_faculty": db.execute(
+            "SELECT COUNT(*) c FROM faculty "
+            "WHERE COALESCE(is_active,1)=1").fetchone()["c"],
+        "pending_vouchers": db.execute(
+            "SELECT COUNT(*) c FROM vouchers "
+            "WHERE status IN ('Pending','Proof Submitted')"
+        ).fetchone()["c"],
+        "total_outstanding": db.execute(
+            "SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) t "
+            "FROM ledger_entries").fetchone()["t"],
+    }
+    by_program = [
+        {"name": r["name"], "count": r["c"]} for r in db.execute(
+            """SELECT COALESCE(p.name,'No Program') name, COUNT(s.id) c
+               FROM students s
+               LEFT JOIN programs p ON p.id=s.program_id
+               GROUP BY COALESCE(p.name,'No Program')
+               ORDER BY c DESC, name""").fetchall()]
+    by_session = [
+        {"name": r["name"], "count": r["c"]} for r in db.execute(
+            """SELECT COALESCE(se.name, s.session_name, 'No Session') name,
+                      COUNT(s.id) c
+               FROM students s
+               LEFT JOIN academic_sessions se ON se.id=s.session_id
+               GROUP BY COALESCE(se.name, s.session_name, 'No Session')
+               ORDER BY c DESC, name""").fetchall()]
+
+    def _queue_count(sql):
+        return db.execute(sql).fetchone()["c"]
+
+    pending_approvals = [
+        {"key": "voucher_proofs", "label": "Fee voucher proofs to verify",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM vouchers "
+             "WHERE status='Proof Submitted'"),
+         "href": "/admin/vouchers"},
+        {"key": "documents", "label": "Student documents to verify",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM student_documents "
+             "WHERE status='Pending'"),
+         "href": "/admin/documents"},
+        {"key": "tickets", "label": "Open support tickets",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM tickets "
+             "WHERE status IN ('Open','In Process')"),
+         "href": "/admin/tickets"},
+        {"key": "clearance", "label": "Clearance items pending",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM clearance_items "
+             "WHERE status='Pending'"),
+         "href": "/admin/clearance"},
+        {"key": "scholarships",
+         "label": "Scholarship applications to decide",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM scholarship_applications "
+             "WHERE status IN ('Applied','Under Review')"),
+         "href": "/admin/scholarships"},
+        {"key": "societies", "label": "Society join requests",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM society_members "
+             "WHERE status='Requested'"),
+         "href": "/admin/societies"},
+        {"key": "vehicle_passes", "label": "Vehicle pass requests",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM vehicle_passes "
+             "WHERE status='Requested'"),
+         "href": "/admin/vehicle-passes"},
+        {"key": "course_repeat", "label": "Course repeat requests",
+         "count": _queue_count(
+             "SELECT COUNT(*) c FROM repeat_requests "
+             "WHERE status='Requested'"),
+         "href": "/admin/repeat"},
+    ]
+    pending_vouchers = [
+        {"challan_no": r["challan_no"], "student_name": r["student_name"],
+         "amount": r["amount"], "status": r["status"]}
+        for r in db.execute(
+            """SELECT v.challan_no, v.amount, v.status, s.name student_name
+               FROM vouchers v JOIN students s ON s.id=v.student_id
+               WHERE v.status IN ('Pending','Proof Submitted')
+               ORDER BY v.id DESC LIMIT 10""").fetchall()]
+    recent_students = [
+        {"reg_no": r["registration_no"], "name": r["name"],
+         "program": r["prog"], "status": r["status"]}
+        for r in db.execute(
+            """SELECT s.registration_no, s.name, s.status, p.name prog
+               FROM students s
+               LEFT JOIN programs p ON p.id=s.program_id
+               ORDER BY s.id DESC LIMIT 8""").fetchall()]
+    recent_notifications = [
+        {"title": r["title"], "created_at": r["published_at"]}
+        for r in db.execute(
+            "SELECT title, published_at FROM notifications "
+            "ORDER BY id DESC LIMIT 5").fetchall()]
+    recent_activity = [
+        {"action": r["action"], "detail": r["details"],
+         "created_at": r["created_at"]}
+        for r in db.execute(
+            "SELECT action, details, created_at FROM audit_log "
+            "ORDER BY id DESC LIMIT 8").fetchall()]
+    return api_ok({
+        "kpis": kpis,
+        "students_by_program": by_program,
+        "students_by_session": by_session,
+        "pending_approvals": pending_approvals,
+        "pending_vouchers": pending_vouchers,
+        "recent_students": recent_students,
+        "recent_notifications": recent_notifications,
+        "recent_activity": recent_activity,
+    })
+
+
 @app.route("/api/v1/auth/me")
 @api_role_required(*_API_ALL_ROLES)
 def api_v1_me():

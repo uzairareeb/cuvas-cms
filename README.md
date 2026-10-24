@@ -1381,3 +1381,43 @@ run for this slice: `npm install` + `npm run build` succeeded, and
 a live proxy test (Next on :3100 → Flask on :5055) passed health,
 login and `/auth/me` through the Next origin with the proxied
 session cookie.
+
+## Next.js migration — Slice 1 (shell + login + admin dashboard)
+
+Builds on the Slice 0 API foundation. The Next.js frontend now has
+a real login page and a read-only admin dashboard in the decided
+navy / white / subtle-gold design (user decision, 2026-10-24); the
+legacy Flask UI is unchanged and remains the live system.
+
+### New API endpoint
+
+| Method & path | Guard | Returns |
+|---|---|---|
+| `GET /api/v1/admin/dashboard` | `api_role_required("admin")` (anon → 401 JSON, non-admin → 403 JSON) | One read-only aggregate for the dashboard: `kpis` (total students, active faculty, pending vouchers — same `'Pending'/'Proof Submitted'` set as the HTML dashboard — and total outstanding from the ledger sum behind `student_outstanding()`), `students_by_program`, `students_by_session`, `pending_approvals` (the 8 action queues — voucher proofs, documents, open tickets, clearance items, scholarship applications, society joins, vehicle passes, course repeats — each with its legacy `/admin/...` href), `pending_vouchers` (latest 10), `recent_students` (latest 8), `recent_notifications` (latest 5), `recent_activity` (latest 8 audit rows). Amounts are numbers; no writes anywhere. |
+
+### Verification
+
+`verify_api_v1.py` — **50 checks, all passing on SQLite AND
+PostgreSQL**: the 30 Slice 0 checks plus dashboard checks —
+anonymous 401, student 403, accounts 403, admin 200 with every KPI
+equal to an independent direct-SQL ground truth (outstanding
+compared against a per-student ledger sum), by-program counts
+summing to the student total, by-session and all 8 approval-queue
+counts matching ground truth. All 14 legacy suites stay at the
+known baseline on both backends: **843 pass + the one accepted
+v0.11 exception**.
+
+### Frontend (`web/`)
+
+Login page (official CUVAS logo, API error messages incl. the
+lockout text), navy grouped sidebar + topbar shell, and the admin
+dashboard rendering only API data (KPI cards, program/session bars,
+pending approvals, pending vouchers, recent students, notifications,
+activity, quick links). Non-admin roles are routed to their legacy
+home; every not-yet-migrated path is proxied to Flask by the
+fallback rewrite, so the legacy UI works on the Next origin.
+`npm run build` passes; a live local end-to-end (Flask :5055 +
+Next :3100) verified login, the dashboard data, a proxied legacy
+page and the student 403 through the Next origin. Still **local
+only** — the separate Vercel project for `web/` is a deployment
+step, not part of this slice.

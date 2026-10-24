@@ -214,6 +214,139 @@ check("HTML /login shows the same lockout for API-driven failures",
       r.status_code == 200
       and "This account is locked" in r.get_data(as_text=True))
 
+# --------------------------------------- Slice 1: admin dashboard endpoint
+DASH = "/api/v1/admin/dashboard"
+r = m.app.test_client().get(DASH)
+check("dashboard anonymous -> 401 not_authenticated",
+      envelope_err(r, 401, "not_authenticated"))
+r = c3.get(DASH)  # c3 holds the student session
+check("dashboard as student -> 403 forbidden",
+      envelope_err(r, 403, "forbidden"))
+c5 = m.app.test_client()
+r = api_login(c5, "accounts", "Accounts@123")
+check("accounts API login works (for the dashboard denial check)",
+      envelope_ok(r) and (r.get_json()["data"].get("user") or {}).get(
+          "role") == "accounts")
+r = c5.get(DASH)
+check("dashboard as accounts -> 403 forbidden",
+      envelope_err(r, 403, "forbidden"))
+c5.post("/api/v1/auth/logout", headers=HDR)
+
+c6 = m.app.test_client()
+api_login(c6, "admin", "Admin@123")
+r = c6.get(DASH)
+check("dashboard as admin -> 200 envelope", envelope_ok(r))
+dash = (r.get_json() or {}).get("data") or {}
+kpis = dash.get("kpis") or {}
+
+# Ground truth — independent direct SQL, computed here, not via the API.
+gt_students = dbq("SELECT COUNT(*) c FROM students")[0]["c"]
+gt_faculty = dbq("SELECT COUNT(*) c FROM faculty "
+                 "WHERE COALESCE(is_active,1)=1")[0]["c"]
+gt_pending_v = dbq("SELECT COUNT(*) c FROM vouchers "
+                   "WHERE status IN ('Pending','Proof Submitted')")[0]["c"]
+gt_outstanding = 0
+for srow in dbq("SELECT id FROM students"):
+    gt_outstanding += dbq(
+        "SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) t "
+        "FROM ledger_entries WHERE student_id=?", (srow["id"],))[0]["t"]
+check("dashboard KPI total_students == ground truth",
+      kpis.get("total_students") == gt_students,
+      f"api={kpis.get('total_students')} sql={gt_students}")
+check("dashboard KPI active_faculty == ground truth",
+      kpis.get("active_faculty") == gt_faculty,
+      f"api={kpis.get('active_faculty')} sql={gt_faculty}")
+check("dashboard KPI pending_vouchers == ground truth",
+      kpis.get("pending_vouchers") == gt_pending_v,
+      f"api={kpis.get('pending_vouchers')} sql={gt_pending_v}")
+check("dashboard KPI total_outstanding == per-student ledger sum",
+      kpis.get("total_outstanding") == gt_outstanding,
+      f"api={kpis.get('total_outstanding')} sql={gt_outstanding}")
+
+gt_by_program = {row["name"]: row["c"] for row in dbq(
+    """SELECT COALESCE(p.name,'No Program') name, COUNT(s.id) c
+       FROM students s LEFT JOIN programs p ON p.id=s.program_id
+       GROUP BY COALESCE(p.name,'No Program')""")}
+api_by_program = {row["name"]: row["count"]
+                  for row in dash.get("students_by_program") or []}
+check("students_by_program matches ground truth",
+      api_by_program == gt_by_program,
+      f"api={api_by_program} sql={gt_by_program}")
+check("students_by_program counts sum to total_students",
+      sum(api_by_program.values()) == gt_students)
+gt_by_session = {row["name"]: row["c"] for row in dbq(
+    """SELECT COALESCE(se.name, s.session_name, 'No Session') name,
+              COUNT(s.id) c
+       FROM students s
+       LEFT JOIN academic_sessions se ON se.id=s.session_id
+       GROUP BY COALESCE(se.name, s.session_name, 'No Session')""")}
+api_by_session = {row["name"]: row["count"]
+                  for row in dash.get("students_by_session") or []}
+check("students_by_session matches ground truth",
+      api_by_session == gt_by_session,
+      f"api={api_by_session} sql={gt_by_session}")
+
+gt_queues = {
+    "voucher_proofs": dbq("SELECT COUNT(*) c FROM vouchers "
+                          "WHERE status='Proof Submitted'")[0]["c"],
+    "documents": dbq("SELECT COUNT(*) c FROM student_documents "
+                     "WHERE status='Pending'")[0]["c"],
+    "tickets": dbq("SELECT COUNT(*) c FROM tickets "
+                   "WHERE status IN ('Open','In Process')")[0]["c"],
+    "clearance": dbq("SELECT COUNT(*) c FROM clearance_items "
+                     "WHERE status='Pending'")[0]["c"],
+    "scholarships": dbq("SELECT COUNT(*) c FROM scholarship_applications "
+                        "WHERE status IN ('Applied','Under Review')")[0]["c"],
+    "societies": dbq("SELECT COUNT(*) c FROM society_members "
+                     "WHERE status='Requested'")[0]["c"],
+    "vehicle_passes": dbq("SELECT COUNT(*) c FROM vehicle_passes "
+                          "WHERE status='Requested'")[0]["c"],
+    "course_repeat": dbq("SELECT COUNT(*) c FROM repeat_requests "
+                         "WHERE status='Requested'")[0]["c"],
+}
+api_queues = {row["key"]: row["count"]
+              for row in dash.get("pending_approvals") or []}
+check("pending_approvals has exactly the 8 queues",
+      set(api_queues) == set(gt_queues),
+      f"api keys={sorted(api_queues)}")
+check("pending_approvals counts == ground truth",
+      api_queues == gt_queues, f"api={api_queues} sql={gt_queues}")
+check("pending_approvals rows carry label + legacy href",
+      all(row.get("label") and (row.get("href") or "").startswith("/admin/")
+          for row in dash.get("pending_approvals") or []))
+
+api_pv = dash.get("pending_vouchers") or []
+check("pending_vouchers list length == min(KPI, 10) and fields present",
+      len(api_pv) == min(gt_pending_v, 10)
+      and all({"challan_no", "student_name", "amount", "status"}
+              <= set(row) for row in api_pv))
+gt_first_pv = dbq(
+    """SELECT v.challan_no FROM vouchers v
+       WHERE v.status IN ('Pending','Proof Submitted')
+       ORDER BY v.id DESC LIMIT 1""")
+check("pending_vouchers is latest-first",
+      not gt_first_pv
+      or (api_pv and api_pv[0]["challan_no"] == gt_first_pv[0]["challan_no"]))
+api_rs = dash.get("recent_students") or []
+gt_rs = dbq("SELECT registration_no FROM students ORDER BY id DESC LIMIT 8")
+check("recent_students == latest 8 by id, with reg_no/name/program/status",
+      [row["reg_no"] for row in api_rs]
+      == [row["registration_no"] for row in gt_rs]
+      and all({"reg_no", "name", "program", "status"} <= set(row)
+              for row in api_rs))
+api_rn = dash.get("recent_notifications") or []
+gt_rn = dbq("SELECT title FROM notifications ORDER BY id DESC LIMIT 5")
+check("recent_notifications == latest 5 titles",
+      [row["title"] for row in api_rn] == [row["title"] for row in gt_rn]
+      and all("created_at" in row for row in api_rn))
+api_ra = dash.get("recent_activity") or []
+gt_ra = dbq("SELECT action FROM audit_log ORDER BY id DESC LIMIT 8")
+check("recent_activity == latest audit_log rows (action/detail/created_at)",
+      [row["action"] for row in api_ra] == [row["action"] for row in gt_ra]
+      and all({"action", "detail", "created_at"} <= set(row)
+              for row in api_ra))
+c6.post("/api/v1/auth/logout", headers=HDR)
+
 print()
 if FAIL:
     print(f"{len(FAIL)} FAILURE(S):")
