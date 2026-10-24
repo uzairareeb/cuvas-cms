@@ -1308,3 +1308,76 @@ Posting an approved scholarship award to the fee ledger /
 vouchers, surveys (deferred by the user), backup restore
 (deliberately manual), per-form CSRF tokens (documented above as
 a future hardening item).
+
+## Next.js migration — Slice 0 (API foundation)
+
+The first slice of the Next.js migration (plan:
+`~/workspace/cuvas-cms/nextjs-migration-plan.md`). A thin JSON layer
+in `app.py` (the "API v1" section) over the SAME helpers the HTML
+views use — no existing route, template or stylesheet changed, and
+no business rule re-implemented.
+
+### Endpoints
+
+| Method + path | Auth | Behaviour |
+|---|---|---|
+| `GET /api/v1/health` | public | Liveness probe: `{"service": "MY CUVAS API", "version": "v1"}` |
+| `POST /api/v1/auth/login` | public | JSON twin of `POST /login`: body `{"username", "password"}` → 200 + `{"user": {"id", "username", "role", "name"}, "home": "<role landing path>"}`; 401 `invalid_credentials`; 423 `account_locked`; 400 `bad_request` |
+| `POST /api/v1/auth/logout` | session | Same `logout` audit row + session clear as `/logout`. Idempotent: no live session still returns ok |
+| `GET /api/v1/auth/me` | any role | The session's identity (same shape as login) + `home`. Anonymous → 401 `not_authenticated` |
+
+### Contract
+
+- Envelope: success → `{"ok": true, "data": {...}}`; error →
+  `{"ok": false, "error": {"code": "<snake_case>", "message": "..."}}`
+  with the matching HTTP status. **Every** `/api/v1` response is
+  JSON — 404 / 405 / 413 / 500 under `/api/v1` are JSON too (scoped
+  error handlers); all other paths keep their existing behaviour.
+- **Sessions, not tokens:** login runs the existing `_sign_in()` +
+  `_start_session()` — the same hashed-password check, the same
+  `login_attempts` lockout (5 failures / 15 minutes, locked accounts
+  refused before the password check), the same audit rows — and sets
+  the ordinary Flask session cookie. No JWT, no bearer tokens, no
+  CORS headers anywhere; a session started via the API opens the
+  HTML pages and vice versa.
+- **CSRF rule for API mutations:** state-changing calls
+  (POST/PUT/PATCH/DELETE under `/api/v1`) must send the header
+  `X-Requested-With: XMLHttpRequest` — a cross-site form cannot set
+  a custom header without a CORS preflight, and no CORS is served,
+  so cross-site calls fail; when an `Origin`/`Referer` header is
+  present its host must also match the request host. Violations →
+  403 `csrf_check_failed`. (The legacy HTML forms keep their
+  existing SameSite=Lax posture.)
+- Future slices gate endpoints with `api_role_required(*roles)` —
+  the JSON twin of `@role_required` (401/403 envelopes instead of a
+  flash + redirect), defined in Slice 0 and applied to `/auth/me`.
+
+### Verification
+
+`verify_api_v1.py` — **30 checks, all passing on SQLite AND
+PostgreSQL**: health + envelope, JSON 404/405, the CSRF header +
+Origin rules, malformed/missing-field 400s, `/me` anonymous 401,
+admin + student logins (identity matches the `users` row, correct
+role home), session interop both ways (API login opens HTML
+`/admin`; HTML login satisfies `/auth/me`), API logout (then `/me`
+401 and `/admin` redirects), and lockout parity — 5 failed API
+logins record `login_attempts` rows, the correct password then gets
+423, and the HTML `/login` shows the same lockout flash, proving
+one shared mechanism. All 14 legacy suites stay at the known
+baseline on both backends: **843 pass + the one accepted v0.11
+exception**.
+
+### Frontend scaffold (`web/`)
+
+`~/workspace/cuvas-cms/web/` holds the hand-authored Next.js
+scaffold (Next 15 / React 19 / TypeScript / Tailwind 3, shadcn/ui
+prerequisites + `components.json`). `next.config.mjs` rewrites
+`/api/v1/*` to `FLASK_API_BASE` (default `http://localhost:5055`)
+server-side, so the browser only ever sees one origin and the
+session cookie stays first-party. It is **local only** in this
+slice — its own Vercel project arrives at Slice 1 — and
+`node_modules/` / `.next/` are never committed. Local smoke tests
+run for this slice: `npm install` + `npm run build` succeeded, and
+a live proxy test (Next on :3100 → Flask on :5055) passed health,
+login and `/auth/me` through the Next origin with the proxied
+session cookie.

@@ -153,8 +153,8 @@ import sqlite3
 import string
 from functools import wraps
 
-from flask import (Flask, abort, g, redirect, render_template, request,
-                   send_file, session, url_for, flash)
+from flask import (Flask, abort, g, jsonify, redirect, render_template,
+                   request, send_file, session, url_for, flash)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -196,6 +196,13 @@ def _security_headers(resp):
 
 @app.errorhandler(413)
 def _upload_too_large(_err):
+    if request.path.startswith("/api/v1/"):
+        # API clients always get the JSON envelope, never an HTML page
+        # (the api_error helper lives in the API v1 section below).
+        return jsonify(ok=False, error={
+            "code": "payload_too_large",
+            "message": "The request body is too large "
+                       "(10 MB maximum)."}), 413
     return ("""<!doctype html><html><head><title>Upload too large</title></head>
 <body style="font-family:sans-serif;margin:3em">
 <h1>Upload too large</h1>
@@ -8565,6 +8572,204 @@ def admin_backup_download():
     return send_file(zbuf, as_attachment=True,
                      download_name=f"cuvas-backup-{stamp}.zip",
                      mimetype="application/zip")
+
+
+# ================================================================ API v1
+# Next.js migration — Slice 0 (API foundation). See
+# ~/workspace/cuvas-cms/nextjs-migration-plan.md (§2.2 / §2.3).
+#
+# A thin JSON layer over the SAME helpers the HTML views use — nothing
+# here re-implements a business rule, and no existing route changes:
+# sign-in goes through _sign_in() + _start_session() (identical hashed
+# -password check, identical login_attempts lockout, identical audit
+# rows, and the ordinary Flask session cookie — no tokens, no JWT),
+# and role checks read the same session @role_required reads.
+#
+# Envelope: success -> {"ok": true, "data": ...};
+#           error   -> {"ok": false,
+#                       "error": {"code": <snake_case>, "message": ...}}
+# with the matching HTTP status. Every /api/v1 response is JSON —
+# including 404 / 405 / 413 / 500, via the scoped handlers below.
+# No CORS headers are served anywhere: the Next.js frontend reaches
+# this API same-origin through its rewrite proxy, so the session
+# cookie stays first-party.
+from urllib.parse import urlsplit as _api_urlsplit
+
+API_V1_PREFIX = "/api/v1"
+_API_ALL_ROLES = ("admin", "student", "faculty", "accounts", "coe")
+
+
+def _is_api_request():
+    return (request.path == API_V1_PREFIX
+            or request.path.startswith(API_V1_PREFIX + "/"))
+
+
+def api_ok(data, status=200):
+    """Success envelope: {"ok": true, "data": ...}."""
+    return jsonify(ok=True, data=data), status
+
+
+def api_error(status, code, message):
+    """Error envelope: {"ok": false, "error": {"code", "message"}}."""
+    return jsonify(ok=False, error={"code": code, "message": message}), status
+
+
+def api_role_required(*roles):
+    """JSON twin of @role_required, for API views: the same session +
+    role check, but a denial is a 401/403 JSON envelope instead of a
+    flash + redirect to the role's HTML home. Future slices gate
+    their endpoints with this decorator; Slice 0 applies it to
+    /api/v1/auth/me with every role allowed."""
+    def deco(view):
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            if not session.get("user_id"):
+                return api_error(401, "not_authenticated",
+                                 "You are not signed in.")
+            if roles and session.get("role") not in roles:
+                return api_error(403, "forbidden",
+                                 "You do not have access to that area.")
+            return view(*args, **kwargs)
+        return wrapped
+    return deco
+
+
+@app.before_request
+def _api_v1_csrf_guard():
+    """CSRF posture for /api/v1 mutations (plan §2.2 point 6).
+
+    State-changing calls (POST/PUT/PATCH/DELETE under /api/v1) must
+    carry the header "X-Requested-With: XMLHttpRequest". A cross-site
+    form cannot set a custom header without triggering a CORS
+    preflight, and this app serves no CORS headers, so a cross-site
+    caller's request can never be made with credentials from a
+    browser; same-origin callers (the Next.js rewrite proxy, any
+    first-party client) set the header and pass. On top of that, when
+    an Origin (or Referer) header is present, its host must equal the
+    request host. Safe methods are not guarded. The legacy HTML forms
+    keep their existing SameSite=Lax posture — untouched."""
+    if not _is_api_request():
+        return None
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return api_error(403, "csrf_check_failed",
+                         "State-changing API requests must include the "
+                         "'X-Requested-With: XMLHttpRequest' header.")
+    origin = request.headers.get("Origin") or request.headers.get("Referer")
+    if origin and _api_urlsplit(origin).netloc != request.host:
+        return api_error(403, "csrf_check_failed",
+                         "Cross-origin API requests are not allowed.")
+    return None
+
+
+# Scoped error handlers: JSON under /api/v1, Flask's default error
+# page (returned verbatim) everywhere else — existing behaviour of
+# the HTML app is unchanged.
+@app.errorhandler(404)
+def _api_aware_404(err):
+    if _is_api_request():
+        return api_error(404, "not_found",
+                         "The requested API resource was not found.")
+    return err.get_response()
+
+
+@app.errorhandler(405)
+def _api_aware_405(err):
+    if _is_api_request():
+        return api_error(405, "method_not_allowed",
+                         "This method is not allowed on the requested "
+                         "API resource.")
+    return err.get_response()
+
+
+@app.errorhandler(500)
+def _api_aware_500(err):
+    if _is_api_request():
+        return api_error(500, "internal_error",
+                         "Something went wrong on the server. Please "
+                         "try again later.")
+    return err.get_response()
+
+
+def _api_user_json(user):
+    """Identity object for a users row — the same shape returned by
+    /api/v1/auth/login and /api/v1/auth/me."""
+    return {"id": user["id"], "username": user["username"],
+            "role": user["role"], "name": user["display_name"]}
+
+
+def _api_home_path():
+    """Landing path of the signed-in role, via the SAME mapping the
+    HTML login redirects through (home_for_role over the session)."""
+    return url_for(home_for_role())
+
+
+@app.route("/api/v1/health")
+def api_v1_health():
+    """Public liveness probe for the API layer."""
+    return api_ok({"service": "MY CUVAS API", "version": "v1"})
+
+
+@app.route("/api/v1/auth/login", methods=["POST"])
+def api_v1_login():
+    """JSON twin of POST /login — no redirect. The credential check
+    is _sign_in() itself: same lockout refusal (before the password
+    check), same attempt + audit recording; success starts the
+    ordinary Flask session via _start_session(). Statuses: 200 on
+    success, 401 invalid credentials, 423 locked account (with the
+    same message text the HTML flow flashes), 400 for a malformed or
+    incomplete JSON body."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return api_error(400, "bad_request",
+                         "Request body must be a JSON object with "
+                         "'username' and 'password'.")
+    username = payload.get("username")
+    password = payload.get("password")
+    if (not isinstance(username, str) or not isinstance(password, str)
+            or not username.strip() or not password):
+        return api_error(400, "bad_request",
+                         "Both 'username' and 'password' are required.")
+    username = username.strip()
+    user, state = _sign_in(get_db(), username, password)
+    if state == "locked":
+        return api_error(423, "account_locked",
+                         f"Too many failed sign-in attempts for "
+                         f"'{username}'. This account is locked — "
+                         f"please try again in {LOGIN_LOCKOUT_MINUTES} "
+                         f"minutes.")
+    if state != "ok":
+        return api_error(401, "invalid_credentials",
+                         "Invalid username or password.")
+    _start_session(user)
+    return api_ok({"user": _api_user_json(user), "home": _api_home_path()})
+
+
+@app.route("/api/v1/auth/logout", methods=["POST"])
+def api_v1_logout():
+    """JSON twin of /logout: the same 'logout' audit row and the same
+    session clear when a session is live. Idempotent — calling it
+    with no live session still returns ok (there is simply nothing
+    to end, so no audit row is written)."""
+    if session.get("user_id"):
+        log_audit("logout")
+        session.clear()
+    return api_ok({})
+
+
+@app.route("/api/v1/auth/me")
+@api_role_required(*_API_ALL_ROLES)
+def api_v1_me():
+    """Identity for the current session. Presentation only — it
+    grants nothing; every API endpoint enforces its own role check
+    server-side, exactly as the HTML guards do."""
+    user = get_db().execute("SELECT * FROM users WHERE id=?",
+                            (session["user_id"],)).fetchone()
+    if user is None:  # the session outlived its users row
+        return api_error(401, "not_authenticated",
+                         "You are not signed in.")
+    return api_ok({"user": _api_user_json(user), "home": _api_home_path()})
 
 
 if __name__ == "__main__":
