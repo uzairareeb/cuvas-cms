@@ -1,12 +1,13 @@
-{% extends "base.html" %}
-{% block body %}
-<link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}">
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MY CUVAS — Campus Management System (Demo)</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}"></head>
+<body>
+<header class="lp-header"><div class="lp-header-inner"><img class="lp-logo" src="{{ url_for('cuvas_logo') }}" width="315" height="160" alt="CUVAS — Cholistan University of Veterinary and Animal Sciences, Bahawalpur"></div></header>
+{% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}<div class="lp-flash-wrap">{% for cat, m in msgs %}<div class="lp-flash {{ cat }}">{{ m }}</div>{% endfor %}</div>{% endif %}{% endwith %}
 <section class="lp-hero">
-  <p class="lp-eyebrow">Cholistan University of Veterinary and Animal Sciences, Bahawalpur</p>
-  <h1 class="lp-title">MY <span>CUVAS</span></h1>
-  <p class="lp-subtitle">University Management System</p>
-  <p class="lp-lead">One portal for students, faculty and administration — enrollments, fee vouchers, results, transcripts, attendance and campus services, all in one place.</p>
-  <a class="lp-btn" href="{{ url_for('login') }}">Login to Portal</a>
+  <h1 class="lp-title">University Management System</h1>
+  <p class="lp-lead">One unified digital platform for students, faculty, and administration to manage enrollments, fee vouchers, results, transcripts, attendance, and campus services — all in one place.</p>
 </section>
 <section class="lp-portals">
   <h2 class="lp-section-title">Choose your portal</h2>
@@ -46,4 +47,5 @@
   <p class="lp-note">One shared sign-in: log in once and you are taken to your own portal automatically.</p>
 </section>
 {% if show_demo %}<div class="lp-demo"><strong>Demo accounts:</strong> Admin — <code>admin / Admin@123</code> · Student — <code>student / Student@123</code> · Faculty — <code>faculty / Faculty@123</code> · Accounts Office — <code>accounts / Accounts@123</code> · Controller of Examinations — <code>coe / Coe@123</code> (demo-only, fictional).</div>{% endif %}
-{% endblock %}
+<footer class="lp-footer">MY CUVAS — Campus Management System (Demo) v0.3 · Cholistan University of Veterinary and Animal Sciences · All data shown is fictional demo data.</footer>
+</body></html>
