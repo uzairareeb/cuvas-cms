@@ -6,7 +6,21 @@
       <p class="dash-sub">Here&rsquo;s what&rsquo;s happening across MY CUVAS today &middot; {{ today_display }}</p>
     </div>
     <div class="dash-head-actions">
-      <a class="dash-bell" href="{{ url_for('admin_notifications') }}" title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></a>
+      <div class="dash-bell-wrap" id="dash-bell-wrap">
+        <button class="dash-bell" id="dash-bell-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Recent activity notifications" title="Recent activity notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></button>
+        <div class="dash-bell-panel" id="dash-bell-panel" hidden aria-label="Recent activity notifications">
+          <p class="dash-bell-title">Recent activity</p>
+          {% if recent_activity %}
+          <ul class="dash-bell-list">
+            {% for a in recent_activity %}<li class="dash-bell-item">
+              <span class="dash-feed-icon">{% if 'login' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{% elif 'notification' in a['action'] %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>{% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>{% endif %}</span>
+              <span class="dash-feed-main"><span class="dash-feed-text">{{ a['details'] or a['action'] }}</span><span class="dash-feed-meta">{{ a['username'] or '' }}{% if a['username'] %} &middot; {% endif %}{{ a['created_at'] or '' }}</span></span>
+            </li>{% endfor %}
+          </ul>
+          {% else %}<p class="dash-bell-empty">No recent activity.</p>{% endif %}
+          <a class="dash-bell-foot" href="{{ url_for('admin_audit') }}">View all activity &rarr;</a>
+        </div>
+      </div>
       <button class="dash-refresh" id="dash-refresh" type="button"><svg id="dash-refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg><span>Refresh</span></button>
     </div>
   </div>
@@ -38,16 +52,9 @@
     </a>
   </div>
 
-  <div class="dash-mini">
-    <a class="dash-mini-item" href="{{ url_for('admin_departments') }}"><span class="dash-mini-value">{{ kpis.departments }}</span><span class="dash-mini-label">Departments</span></a>
-    <a class="dash-mini-item" href="{{ url_for('admin_programs') }}"><span class="dash-mini-value">{{ kpis.programs }}</span><span class="dash-mini-label">Programs</span></a>
-    <a class="dash-mini-item" href="{{ url_for('admin_sessions') }}"><span class="dash-mini-value">{{ sessions_count }}</span><span class="dash-mini-label">Sessions</span></a>
-    <a class="dash-mini-item" href="{{ url_for('admin_courses') }}"><span class="dash-mini-value">{{ courses_count }}</span><span class="dash-mini-label">Courses</span></a>
-  </div>
-
   <div class="dash-grid">
     <section class="dash-card">
-      <h3 class="dash-card-title">Students by Program</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Students by Program</h3><span class="dash-card-meta"><span class="dash-card-meta-value">{{ kpis.programs }}</span> programs</span></div>
       {% if students_by_program %}
       {% set _maxp = students_by_program[0]['c'] %}
       <div class="dash-bars">
@@ -56,7 +63,7 @@
       {% else %}<p class="dash-empty">No program enrolment data yet.</p>{% endif %}
     </section>
     <section class="dash-card">
-      <h3 class="dash-card-title">Fee Collection vs Outstanding</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Fee Collection vs Outstanding</h3></div>
       {% set _feetotal = fee_collected + fee_outstanding %}
       {% if _feetotal > 0 %}
       {% set _pct = (fee_collected * 100 / _feetotal)|round(1) %}
@@ -74,7 +81,7 @@
       {% else %}<p class="dash-empty">No fee ledger entries yet.</p>{% endif %}
     </section>
     <section class="dash-card">
-      <h3 class="dash-card-title">Students by Department</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Students by Department</h3><span class="dash-card-meta"><span class="dash-card-meta-value">{{ kpis.departments }}</span> departments</span></div>
       {% if students_by_department %}
       {% set _maxd = students_by_department[0]['c'] %}
       <div class="dash-bars">
@@ -83,7 +90,7 @@
       {% else %}<p class="dash-empty">No department enrolment data yet.</p>{% endif %}
     </section>
     <section class="dash-card">
-      <h3 class="dash-card-title">Academic Performance &mdash; Average GPA by Semester</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Academic Performance &mdash; Average GPA by Semester</h3></div>
       {% if gpa_by_semester %}
       {% set _maxg = 4.0 %}
       <div class="dash-cols">
@@ -102,7 +109,7 @@
 
   <div class="dash-grid">
     <section class="dash-card" id="dash-approvals">
-      <h3 class="dash-card-title">Pending Approvals &mdash; Action Center</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Pending Approvals &mdash; Action Center</h3></div>
       {% if pending_approvals > 0 %}
       <ul class="dash-queues">
         {% for q in queues %}{% if q.count > 0 %}<li class="dash-queue"><span class="dash-queue-main"><span class="dash-queue-label">{{ q.label }}</span><span class="dash-queue-note">{{ q.note }}</span></span><span class="dash-queue-count">{{ q.count }}</span><a class="dash-queue-link" href="{{ q.url }}">Review &rarr;</a></li>{% endif %}{% endfor %}
@@ -110,7 +117,7 @@
       {% else %}<p class="dash-empty">All clear &mdash; no items waiting for approval.</p>{% endif %}
     </section>
     <section class="dash-card">
-      <h3 class="dash-card-title">Recent Activity</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Recent Activity</h3></div>
       {% if recent_activity %}
       <ul class="dash-feed">
         {% for a in recent_activity %}<li class="dash-feed-item">
@@ -124,7 +131,7 @@
   </div>
 
   <section class="dash-card">
-    <h3 class="dash-card-title">Quick Actions</h3>
+    <div class="dash-card-head"><h3 class="dash-card-title">Quick Actions</h3></div>
     <div class="dash-actions">
       <a class="dash-action" href="{{ url_for('admin_student_new') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/><path d="M19 8v6M16 11h6"/></svg></span><span>Add Student</span></a>
       <a class="dash-action" href="{{ url_for('admin_faculty_new') }}"><span class="dash-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5-10-5z"/><path d="M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4"/><path d="M22 9v5"/></svg></span><span>Register Faculty</span></a>
@@ -139,13 +146,13 @@
 
   <div class="dash-grid">
     <section class="dash-card">
-      <h3 class="dash-card-title">Recent Students</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Recent Students</h3></div>
       <table class="dash-table"><tr><th>Reg. No</th><th>Name</th><th>Department</th><th>Program</th><th>Semester</th><th>Status</th></tr>
       {% for s in recent_students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td><td>{{ s.dept }}</td><td>{{ s.prog }}</td><td>{{ s.current_semester }}</td><td>{{ s.status }}</td></tr>{% else %}<tr><td colspan="6">No students yet.</td></tr>{% endfor %}</table>
       <p class="dash-card-foot"><a href="{{ url_for('admin_students') }}">View all students &rarr;</a></p>
     </section>
     <section class="dash-card">
-      <h3 class="dash-card-title">Latest Announcements</h3>
+      <div class="dash-card-head"><h3 class="dash-card-title">Latest Announcements</h3></div>
       {% if recent_notifications %}
       <ul class="dash-notes">
         {% for n in recent_notifications %}<li class="dash-note"><span class="dash-note-title">{{ n['title'] }}</span><span class="dash-note-body">{{ n['body'] }}</span><span class="dash-note-meta">{{ n['published_at'] or '' }}</span></li>{% endfor %}
@@ -158,13 +165,36 @@
 <script>
 (function () {
   var btn = document.getElementById('dash-refresh');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    btn.disabled = true;
-    var icon = document.getElementById('dash-refresh-icon');
-    if (icon) icon.classList.add('dash-spin');
-    window.location.reload();
-  });
+  if (btn) {
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      var icon = document.getElementById('dash-refresh-icon');
+      if (icon) icon.classList.add('dash-spin');
+      window.location.reload();
+    });
+  }
+  var wrap = document.getElementById('dash-bell-wrap');
+  var bellBtn = document.getElementById('dash-bell-btn');
+  var panel = document.getElementById('dash-bell-panel');
+  if (wrap && bellBtn && panel) {
+    function setBell(open) {
+      panel.hidden = !open;
+      bellBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    bellBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setBell(panel.hidden);
+    });
+    document.addEventListener('click', function (e) {
+      if (!wrap.contains(e.target)) { setBell(false); }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !panel.hidden) {
+        setBell(false);
+        bellBtn.focus();
+      }
+    });
+  }
 })();
 </script>
 {% endblock %}
