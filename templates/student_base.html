@@ -23,6 +23,7 @@
     'home' %}
 <div class="layout student-layout">
 <aside class="sidebar student-sidebar">
+<div class="portal-brand"><a href="{{ url_for('student_dashboard') }}" title="myCUVAS — Campus Management System"><img src="{{ url_for('mycuvas_logo') }}" width="2172" height="724" alt="myCUVAS — Campus Management System"></a></div>
 <div class="who">{% if shell_student and shell_student.name %}{% set _np = shell_student.name.split() %}
 <div class="avatar">{{ (_np[0][0] ~ (_np[-1][0] if _np|length > 1 else ''))|upper }}</div>
 <div><div class="who-name">{{ shell_student.name }}</div>

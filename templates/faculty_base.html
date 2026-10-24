@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block body %}<div class="layout">
-<aside class="sidebar"><a href="{{ url_for('faculty_dashboard') }}">🏠 Dashboard</a>
+<aside class="sidebar"><div class="portal-brand"><a href="{{ url_for('faculty_dashboard') }}" title="myCUVAS — Campus Management System"><img src="{{ url_for('mycuvas_logo') }}" width="2172" height="724" alt="myCUVAS — Campus Management System"></a></div>
+🏠 Dashboard</a>
 <a href="{{ url_for('faculty_dashboard') }}">📚 My Courses</a>
 <a href="{{ url_for('faculty_timetable') }}">🗓 My Timetable</a>
 <a href="{{ url_for('faculty_campus') }}">🌐 Campus Life</a>

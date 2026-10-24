@@ -8,7 +8,7 @@
     <div class="login-form-inner">
       {% set _portal = request.args.get('portal', '') %}
       {% set _demos = {'admin': ('Admin', 'admin', 'Admin@123'), 'student': ('Student', 'student', 'Student@123'), 'faculty': ('Faculty', 'faculty', 'Faculty@123'), 'accounts': ('Accounts Office', 'accounts', 'Accounts@123'), 'coe': ('Controller of Examinations', 'coe', 'Coe@123')} %}
-      <img class="login-logo" src="{{ url_for('cuvas_logo') }}" alt="CUVAS — Cholistan University of Veterinary and Animal Sciences, Bahawalpur" width="315" height="160">
+      <img class="login-logo" src="{{ url_for('mycuvas_logo') }}" alt="myCUVAS — Campus Management System" width="2172" height="724">
       <h1>Welcome Back!</h1>
       <p class="login-welcome">Welcome back! Sign in to access your university account and academic services.</p>
       {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}{% for cat, m in msgs %}<div class="login-flash {{ cat }}" role="alert">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}

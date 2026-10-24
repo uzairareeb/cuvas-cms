@@ -1422,6 +1422,22 @@ def cuvas_logo():
                      mimetype="image/png")
 
 
+@app.route("/brand/mycuvas-logo.png")
+def mycuvas_logo():
+    """Public myCUVAS portal logo: PNG served from the base64 text
+    modules (mycuvas_logo.py + mycuvas_logo_part01..12.py) so no binary
+    file is pushed. The bytes decode to pixels identical to the
+    user-supplied logo (2172x724, lossless re-encode)."""
+    import base64
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "mycuvas_logo", os.path.join(BASE_DIR, "mycuvas_logo.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return send_file(io.BytesIO(base64.b64decode(mod.MYCUVAS_LOGO_B64)),
+                     mimetype="image/png")
+
+
 @app.route("/logout")
 def logout():
     log_audit("logout")
