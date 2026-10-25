@@ -2815,14 +2815,10 @@ def student_dashboard():
 
     # transcript: published results only, grades derived via the shared helper
     transcript, cgpa, cumulative_ch = transcript_data(db, sid, published_only=True)
-    # plan-of-study tint: a plan course counts as completed when the student
-    # has a published, non-superseded result for it with a passing grade
-    # point — the same transcript rows that feed fulfilled_hours. (A failed
-    # attempt still counts in fulfilled_hours by the existing definition,
-    # but is deliberately NOT tinted green.)
-    completed_codes = {r["code"] for block in transcript.values()
-                       for r in block["rows"]
-                       if not r.get("superseded") and (r.get("grade_point") or 0) > 0}
+    # plan-of-study tint: the courses the transcript itself renders as
+    # passed (see completed_plan_codes — remarks, not re-derived points,
+    # so the tint can never disagree with the transcript tab).
+    completed_codes = completed_plan_codes(transcript)
 
     vouchers = db.execute("SELECT * FROM vouchers WHERE student_id=? ORDER BY id", (sid,)).fetchall()
     voucher_children = {v["id"] for v in vouchers if v.get("parent_voucher_id")}
@@ -3653,6 +3649,20 @@ def transcript_data(db, student_id, published_only=True):
     return transcript, cgpa, cumulative_ch
 
 
+def completed_plan_codes(transcript):
+    """Plan-of-study green tint set: courses whose LATEST published result
+    the transcript itself renders as passed. The transcript tab shows the
+    stored remarks column, which save_result writes at marks-entry time
+    from the grading scale then in force and which nothing ever
+    re-derives when the scale later changes — so a row can render "Pass"
+    while its grade point re-derived from today's bands is 0. The tint
+    must agree with what the transcript shows, hence remarks, not the
+    re-derived grade point. Superseded (older) attempts never tint: only
+    the latest attempt decides a course."""
+    return {r["code"] for block in transcript.values() for r in block["rows"]
+            if not r.get("superseded") and (r.get("remarks") or "").strip() == "Pass"}
+
+
 def find_result(db, student_id, course_id, semester_no, session_id):
     """A student's result for a course/semester, preferring the row recorded
     for this session; pre-v0.4 rows have session_id NULL and match any sheet."""
@@ -4232,8 +4242,7 @@ def build_plan_pdf(db, student_id):
     plan_hours = {sem: sum((x["credit_theory"] or 0) + (x["credit_lab"] or 0)
                            for x in rows) for sem, rows in plan.items()}
     transcript, _cgpa, cumulative_ch = transcript_data(db, student_id, published_only=True)
-    completed_codes = {r["code"] for block in transcript.values() for r in block["rows"]
-                       if not r.get("superseded") and (r.get("grade_point") or 0) > 0}
+    completed_codes = completed_plan_codes(transcript)
     styles = getSampleStyleSheet()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
