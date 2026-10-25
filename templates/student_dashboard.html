@@ -12,8 +12,6 @@
   <button class="tab-btn" data-tab="voucher" role="tab" aria-selected="false"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>Financial Voucher</button>
   <button class="tab-btn" data-tab="feeplan" role="tab" aria-selected="false"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>Fee Plan &amp; Scholarships</button>
   <button class="tab-btn" data-tab="statement" role="tab" aria-selected="false"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-8"/><path d="M16 12h-8"/></svg>Account Statement</button>
-  <button class="tab-btn" data-tab="documents" role="tab" aria-selected="false"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>My Documents</button>
-  <button class="tab-btn" data-tab="tickets" role="tab" aria-selected="false"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 18 0"/><rect x="3" y="12" width="4" height="7" rx="2"/><rect x="17" y="12" width="4" height="7" rx="2"/><path d="M20 19a3 3 0 0 1-3 3h-3"/></svg>Support Tickets</button>
 </div>
 
 <section class="tab-pane" id="pane-news" role="tabpanel"><div class="grid">
@@ -70,45 +68,69 @@
 {% endfor %}
 </div></section>
 
-<section class="tab-pane" id="pane-transcript" role="tabpanel"><div class="card"><h3>Transcript</h3>
-<p>Overall CGPA: <strong>{{ cgpa }}</strong></p>
-<p><a class="btn green" href="{{ url_for('student_transcript_pdf') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Download Transcript (PDF)</a>
-<a class="btn ghost" href="{{ url_for('student_slip_pdf') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Roll Number Slip (PDF)</a></p>
-{% for sem, block in transcript.items() %}<h4>Semester {{ sem }} — SGPA: {{ block.sgpa }} · CGPA: {{ block.cgpa }}</h4>
-<table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Marks</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
-{% for r in block.rows %}<tr><td>{{ r.code }}</td><td>{{ r.title }}{% if r.superseded %} <span class="pill split">Repeated</span>{% endif %}</td><td>{{ r.credits }}</td><td>{{ r.marks_display }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}{% if r.superseded %}<br><span class="muted">Superseded by a later attempt — not counted in SGPA/CGPA</span>{% endif %}</td></tr>{% endfor %}</table>{% endfor %}
+<section class="tab-pane" id="pane-transcript" role="tabpanel">
+<div class="transcript-head">
+  <div><h3>Transcript</h3><p>Overall CGPA: <strong>{{ cgpa }}</strong></p></div>
+  <p class="transcript-actions"><a class="btn green" href="{{ url_for('student_transcript_pdf') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Download Transcript (PDF)</a>
+  <a class="btn ghost" href="{{ url_for('student_slip_pdf') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Roll Number Slip (PDF)</a></p>
+</div>
+<p class="muted transcript-legend"><span class="transcript-swatch" aria-hidden="true"></span> Green row = passed course</p>
+<div class="transcript-grid">
+{% for sem, block in transcript.items() %}
+  <div class="card transcript-card">
+    <div class="transcript-card-head"><h3>Semester {{ sem }}</h3>{% if transcript_sessions.get(sem) %}<span>{{ transcript_sessions[sem] }}</span>{% endif %}</div>
+    <table><tr><th>Code</th><th>Course</th><th>Credit Hours</th><th>Marks</th><th>Quality Point</th><th>Grade</th><th>Remarks</th></tr>
+    {% for r in block.rows %}<tr{% if not r.superseded and (r.remarks or '').strip() == 'Pass' %} class="passed"{% endif %}><td>{{ r.code }}</td><td>{{ r.title }}{% if r.superseded %} <span class="pill split">Repeated</span>{% endif %}</td><td>{{ r.credits }}</td><td>{{ r.marks_display }}</td><td>{{ r.quality_points }}</td><td>{{ r.grade }}</td><td>{{ r.remarks }}{% if r.superseded %}<br><span class="muted">Superseded by a later attempt — not counted in SGPA/CGPA</span>{% endif %}</td></tr>{% endfor %}</table>
+    <div class="transcript-card-foot"><span><strong>SGPA: {{ block.sgpa }}</strong></span><span><strong>CGPA: {{ block.cgpa }}</strong></span></div>
+  </div>
+{% else %}
+  <p class="muted">No results published yet.</p>
+{% endfor %}
 </div></section>
 
 <section class="tab-pane" id="pane-voucher" role="tabpanel"><div class="card"><h3>Financial Vouchers</h3>
-<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th><th>Actions</th></tr>
-{% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date }}</td>
+{% if vouchers %}<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th><th>Action</th></tr>
+{% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td>
+<td>{{ v.due_date }}{% if v.due_flag=='overdue' %}<br><span class="pill overdue">Overdue</span>{% elif v.due_flag=='soon' %}<br><span class="pill duesoon">Due soon</span>{% endif %}</td>
 <td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span>
 {% if v.status=='Paid' and v.paid_at %}<br><span class="muted">Paid {{ v.paid_at[:10] }}{% if v.payment_channel %} via {{ v.payment_channel }}{% endif %}</span>{% endif %}
 {% if v.status=='Proof Submitted' %}<br><span class="muted">Proof: {{ v.proof_filename }} ({{ v.payment_channel }})</span>{% endif %}</td>
 <td>{{ v.remarks }}</td>
 <td class="actions"><a class="btn small" href="{{ url_for('student_voucher_challan', voucher_id=v.id) }}">Challan PDF</a>
+{% if v.payable %}<button type="button" class="btn small ghost" aria-expanded="false" aria-controls="proof-{{ v.id }}" onclick="toggleProof({{ v.id }}, this)">Upload Paid Voucher</button>{% endif %}
 {% if v.can_split %}<form method="post" action="{{ url_for('student_voucher_installments', voucher_id=v.id) }}" onsubmit="return confirm('Split this voucher into 2 installments? This voucher will no longer be payable.');"><button class="btn small ghost" type="submit">Create 2 Installments</button></form>{% endif %}
 </td></tr>
-{% if v.payable %}<tr><td colspan="7"><form method="post" enctype="multipart/form-data" action="{{ url_for('student_voucher_proof', voucher_id=v.id) }}" class="proof-form">
+{% if v.payable %}<tr class="proof-row" id="proof-{{ v.id }}" hidden><td colspan="7"><form method="post" enctype="multipart/form-data" action="{{ url_for('student_voucher_proof', voucher_id=v.id) }}" class="proof-form">
 <label>Upload paid proof for {{ v.challan_no }}:</label>
 <input type="file" name="proof" required>
 <select name="payment_channel"><option>Bank</option><option>Mobile Wallet</option><option>RAAST</option></select>
 <button class="btn small green" type="submit">Submit Paid Proof</button></form></td></tr>{% endif %}
-{% endfor %}</table></div></section>
+{% endfor %}</table>
+{% else %}<p class="muted">No vouchers yet.</p>{% endif %}</div></section>
 
-<section class="tab-pane" id="pane-feeplan" role="tabpanel"><div class="grid">
-<div class="card"><h3>Fee Plan — Semester {{ student.current_semester }}</h3>
+<section class="tab-pane" id="pane-feeplan" role="tabpanel"><div class="feeplan-grid">
+<div class="card"><h3>Fee Plan</h3>
 {% if student_plan %}<p class="muted">{{ student_plan.title or 'Fee Plan' }} · {{ student_plan.prog_name }} · {{ student_plan.sess_name }}{% if student_plan.due_date %} · Due {{ student_plan.due_date }}{% endif %}</p>{% endif %}
+<p class="feeplan-line"><span>Semester Fee Plan</span><strong>{{ "{:,}".format(fee_total) }} / PKR</strong></p>
+<p><button type="button" class="btn small" aria-expanded="false" aria-controls="feeplan-details" onclick="toggleFeePlan(this)">View Fee Plan Details</button></p>
+<div id="feeplan-details" hidden>
 <table><tr><th>Fee Head</th><th>Amount (Rs)</th></tr>
 {% for f in fee_lines %}<tr><td>{{ f.head }}</td><td>{{ "{:,}".format(f.amount) }}</td></tr>{% endfor %}
-<tr><th>Total</th><th>{{ "{:,}".format(fee_total) }}</th></tr></table></div>
-<div class="card"><h3>Scholarships</h3><p>Need-based and merit scholarships are open for application. Keep your socio-economic profile complete, apply online, and track the decision here.</p><p><a class="btn green" href="{{ url_for('student_scholarships') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 10-10-5L2 10l10 5 10-5z"/><path d="M6 12.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-3.5"/><path d="M22 10v6"/></svg>Scholarships — My Profile &amp; Applications</a></p></div>
-<div class="card"><h3>Remarks</h3><p>Your fee plan is set per program, session &amp; semester by the accounts office. Scholarships, when awarded, will reflect here and in the Account Statement.</p></div>
+<tr><th>Total</th><th>{{ "{:,}".format(fee_total) }}</th></tr></table>
+</div></div>
+<div class="card"><h3>Scholarships</h3>
+{% if awarded_scholarships %}<table><tr><th>Scholarship Title</th><th>Scholarship Amount</th></tr>
+{% for s in awarded_scholarships %}<tr><td>{{ s.scheme_name }}</td><td>{{ "{:,}".format(s.awarded_amount) if s.awarded_amount is not none else '—' }}</td></tr>{% endfor %}</table>
+{% else %}<p class="muted">No scholarships awarded yet.</p>{% endif %}
+<p><a class="btn green" href="{{ url_for('student_scholarships') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 10-10-5L2 10l10 5 10-5z"/><path d="M6 12.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-3.5"/><path d="M22 10v6"/></svg>Scholarships — My Profile &amp; Applications</a></p></div>
+<div class="card feeplan-span"><h3>Scholarships Remarks</h3>
+{% if scholarship_remarks %}{% for r in scholarship_remarks %}<p>{{ r }}</p>{% endfor %}{% else %}<p class="muted">No Remarks found</p>{% endif %}</div>
 </div></section>
 
 <section class="tab-pane" id="pane-statement" role="tabpanel"><div class="card"><h3>Account Statement</h3>
-<table><tr><th>Voucher Title</th><th>Challan No.</th><th>Date</th><th>Description</th><th>Charged (Rs)</th><th>Paid (Rs)</th></tr>
-{% for l in ledger %}<tr><td>{{ l.voucher_title }}</td><td>{{ l.challan_no }}</td><td>{{ l.entry_date }}</td><td>{{ l.description }}</td><td>{{ "{:,}".format(l.debit) if l.debit else '—' }}</td><td>{{ "{:,}".format(l.credit) if l.credit else '—' }}</td></tr>{% endfor %}</table>
+<p class="muted">Yellow row = amount charged · Green row = amount paid · White row = adjustment.</p>
+<table><tr><th>Voucher Title</th><th>Challan No.</th><th>Date</th><th>Description</th><th>Amount (Rs.)</th></tr>
+{% for l in ledger %}<tr{% if l.credit %} class="row-paid"{% elif l.debit and l.debit > 0 %} class="row-charge"{% endif %}><td>{{ l.voucher_title }}</td><td>{{ l.challan_no }}</td><td>{{ l.entry_date }}</td><td>{{ l.description }}</td><td>{% if l.credit %}{{ "{:,}".format(l.credit) }}{% elif l.debit %}{{ "{:,}".format(l.debit) }}{% else %}—{% endif %}</td></tr>{% endfor %}</table>
 <p style="margin-top:14px">Payable: <strong>Rs {{ "{:,}".format(payable) }}</strong> · Paid: <strong>Rs {{ "{:,}".format(paid) }}</strong> · Remission: <strong>Rs 0</strong> · Outstanding: <strong>Rs {{ "{:,}".format(outstanding) }}</strong></p>
 </div></section>
 
@@ -153,6 +175,8 @@ function show(t){ if(valid.indexOf(t)<0) t='news';
  document.querySelectorAll('.tab-btn').forEach(function(b){var on=b.dataset.tab===t;b.classList.toggle('active', on);b.setAttribute('aria-selected', on?'true':'false');});
  document.getElementById('pane-'+t).classList.add('active'); }
 document.querySelectorAll('.tab-btn').forEach(function(b){ b.addEventListener('click', function(){ show(b.dataset.tab); }); });
+function toggleProof(id, btn){ var row=document.getElementById('proof-'+id); var open=row.hidden; row.hidden=!open; if(btn){ btn.setAttribute('aria-expanded', open?'true':'false'); btn.textContent = open ? 'Hide Upload Form' : 'Upload Paid Voucher'; } }
+function toggleFeePlan(btn){ var d=document.getElementById('feeplan-details'); var open=d.hidden; d.hidden=!open; btn.setAttribute('aria-expanded', open?'true':'false'); btn.textContent = open ? 'Hide Fee Plan Details' : 'View Fee Plan Details'; }
 show(active);
 var _h = (location.hash || '').replace('#', '').replace('pane-', '');
 if (valid.indexOf(_h) >= 0 && _h !== active) show(_h);

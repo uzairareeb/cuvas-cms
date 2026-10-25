@@ -2819,14 +2819,38 @@ def student_dashboard():
     # passed (see completed_plan_codes — remarks, not re-derived points,
     # so the tint can never disagree with the transcript tab).
     completed_codes = completed_plan_codes(transcript)
+    # session name per transcript semester, derived from the rows' own
+    # session ids (never invented): shown in the transcript card headers.
+    session_names = {s["id"]: s["name"] for s in db.execute(
+        "SELECT id, name FROM academic_sessions").fetchall()}
+    transcript_sessions = {}
+    for sem, block in transcript.items():
+        sids = [r.get("session_id") for r in block["rows"]
+                if not r.get("superseded") and r.get("session_id")]
+        if not sids:
+            sids = [r.get("session_id") for r in block["rows"] if r.get("session_id")]
+        transcript_sessions[sem] = session_names.get(sids[0]) if sids else None
 
     vouchers = db.execute("SELECT * FROM vouchers WHERE student_id=? ORDER BY id", (sid,)).fetchall()
     voucher_children = {v["id"] for v in vouchers if v.get("parent_voucher_id")}
     parents_with_children = {v["parent_voucher_id"] for v in vouchers if v.get("parent_voucher_id")}
+    # A split original stays in the database for audit but disappears from
+    # the student's voucher list once its installments exist.
+    vouchers = [v for v in vouchers if v["id"] not in parents_with_children]
+    today = _today()
     for v in vouchers:
         v["payable"] = v["status"] == "Pending"
-        v["can_split"] = v["status"] == "Pending" and v["id"] not in parents_with_children
+        # MAX 2 installments: only an unpaid, never-split, non-installment
+        # voucher may be split, and only once.
+        v["can_split"] = (v["status"] == "Pending" and v["id"] not in parents_with_children
+                          and not v.get("parent_voucher_id"))
         v["is_child"] = v["id"] in voucher_children
+        due = (v.get("due_date") or "")[:10]
+        if v["status"] == "Pending" and due:
+            v["due_flag"] = "overdue" if due < today else (
+                "soon" if due <= _add_days(today, 7) else "")
+        else:
+            v["due_flag"] = ""
     # the student's applicable real fee plan (program + session + semester)
     student_plan, fee_lines = None, []
     eff_session_id = student.get("session_id")
@@ -2858,14 +2882,26 @@ def student_dashboard():
     ledger = db.execute("SELECT * FROM ledger_entries WHERE student_id=? ORDER BY entry_date, id", (sid,)).fetchall()
     payable = sum(x["debit"] or 0 for x in ledger)
     paid = sum(x["credit"] or 0 for x in ledger)
+    # Real awarded scholarships only (never invented rows) + real remarks.
+    awarded_scholarships = db.execute(
+        """SELECT a.*, sc.name scheme_name FROM scholarship_applications a
+           JOIN scholarship_schemes sc ON sc.id=a.scheme_id
+           WHERE a.student_id=? AND a.status='Approved' ORDER BY a.id DESC""",
+        (sid,)).fetchall()
+    scholarship_remarks = [r["admin_remarks"] for r in db.execute(
+        """SELECT admin_remarks FROM scholarship_applications
+           WHERE student_id=? AND COALESCE(admin_remarks,'')<>'' ORDER BY id DESC""",
+        (sid,)).fetchall()]
     active_tab = request.args.get("tab", "news")
     return render_template(
         "student_dashboard.html", student=student, certs=certs, news=news,
         enrollments=enrollments, plan=plan, plan_hours=plan_hours,
         fulfilled_hours=cumulative_ch, completed_codes=completed_codes,
-        transcript=transcript, cgpa=cgpa,
+        transcript=transcript, cgpa=cgpa, transcript_sessions=transcript_sessions,
         vouchers=vouchers, fee_lines=fee_lines, fee_total=fee_total,
         student_plan=student_plan,
+        awarded_scholarships=awarded_scholarships,
+        scholarship_remarks=scholarship_remarks,
         ledger=ledger, payable=payable, paid=paid, outstanding=payable - paid,
         my_documents=my_documents, doc_types=DOC_TYPES,
         my_tickets=my_tickets, ticket_categories=TICKET_CATEGORIES,
@@ -3033,6 +3069,8 @@ def split_voucher(db, v):
     debits the children, keeping statement totals exact."""
     if v["status"] != "Pending":
         return False, "Only a Pending voucher can be split into installments."
+    if v.get("parent_voucher_id"):
+        return False, "Installment vouchers cannot be split again."
     children = db.execute("SELECT COUNT(*) c FROM vouchers WHERE parent_voucher_id=?",
                           (v["id"],)).fetchone()["c"]
     if children:

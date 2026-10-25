@@ -534,3 +534,44 @@ footer { color: var(--stu-muted); }
   .plan-head { flex-direction: column; }
   .plan-total { min-width: 0; flex: 1; }
 }
+
+/* ---- dashboard tabs rebuild: voucher / feeplan / statement / transcript ---- */
+.main tr.proof-row[hidden] { display: none; }
+.main .card tr.proof-row td { background: var(--stu-tint); }
+.pill.overdue { background: #fdecea; color: #9b1c1c; }
+.pill.duesoon { background: #fef6e0; color: #7a5a00; }
+
+.feeplan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.feeplan-span { grid-column: 1 / -1; }
+.feeplan-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.feeplan-line strong { color: var(--stu-indigo); font-size: 18px; }
+#feeplan-details[hidden] { display: none; }
+
+/* statement tints — selectors beat the (0,2,3) zebra rule, as with .done */
+.main .card tr.row-charge td { background: #fef9e7; }
+.main .card tr.row-charge:hover td { background: #fdf3d7; }
+.main .card tr.row-paid td { background: #eaf5ee; }
+.main .card tr.row-paid:hover td { background: #dff0e2; }
+
+/* transcript cards: indigo headers, passed-row tint beats the zebra rule */
+.transcript-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.transcript-head h3 { margin: 0 0 6px; }
+.transcript-head p { margin: 0; }
+.transcript-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 0; }
+.transcript-legend { margin: 12px 0 16px; display: flex; align-items: center; gap: 8px; }
+.transcript-swatch { width: 14px; height: 14px; background: #eaf5ee; border: 1px solid #b9d2c2; flex: none; }
+.transcript-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.transcript-card { padding: 0; overflow: hidden; }
+.transcript-card-head { background: var(--stu-indigo); color: #fff; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.transcript-card-head h3 { margin: 0; color: #fff; font-size: 16px; }
+.transcript-card-head span { font-size: 13px; opacity: .9; white-space: nowrap; }
+.transcript-card table { margin: 0; }
+.transcript-card td { font-variant-numeric: tabular-nums; }
+.main .transcript-card tr.passed td { background: #eaf5ee; }
+.main .transcript-card tr.passed:hover td { background: #dff0e2; }
+.transcript-card-foot { display: flex; justify-content: space-between; gap: 12px; padding: 12px 20px; background: var(--stu-tint); border-top: 1px solid var(--stu-line); font-size: 14px; color: var(--stu-deep); }
+
+@media (max-width: 900px) {
+  .feeplan-grid { grid-template-columns: 1fr; }
+  .feeplan-span { grid-column: auto; }
+}
