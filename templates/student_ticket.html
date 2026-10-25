@@ -11,7 +11,7 @@
 {% if ticket.status != 'Closed' %}
 <div class="form-card wide" style="margin-top:16px">
 <form method="post" action="{{ url_for('student_ticket_reply', ticket_id=ticket.id) }}">
-<label>Your reply</label>
+<label>Your reply <span class="req">*</span></label>
 <textarea name="message" required rows="4" placeholder="Write your reply…"></textarea>
 <div class="form-actions"><button class="btn green" type="submit">Post Reply</button></div></form>
 {% if ticket.status == 'Resolved' %}

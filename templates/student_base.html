@@ -73,7 +73,7 @@
 <div class="stu-profile" id="stu-profile">
 <button class="stu-profile-btn" id="stu-profile-btn" type="button" aria-haspopup="true" aria-expanded="false" title="{{ _f.name }}">
 <span class="stu-avatar" aria-hidden="true">{{ _f.ini }}</span>
-<span class="stu-profile-text"><span class="stu-profile-name">{{ _f.name }}</span>{% if _f.sub %}<span class="stu-profile-role">{{ _f.sub }}</span>{% endif %}</span>
+<span class="stu-profile-text"><span class="stu-profile-name">{{ _f.name }}</span>{% if _f.sub %}<span class="stu-profile-role" title="{{ _f.sub }}">{{ _f.sub }}</span>{% endif %}</span>
 <svg class="stu-profile-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
 </button>
 <div class="stu-profile-menu" id="stu-profile-menu" hidden>

@@ -18,7 +18,7 @@
 <td>
 <form method="post" action="{{ url_for('student_repeat_apply') }}">
 <input type="hidden" name="course_id" value="{{ e.course_id }}">
-<label>Target session</label>
+<label>Target session <span class="req">*</span></label>
 <select name="target_session_id" required>
 <option value="">— choose —</option>
 {% for s in sessions %}<option value="{{ s.id }}" {% if e.session_id and s.id==e.session_id %}disabled{% endif %}>{{ s.name }}{% if e.session_id and s.id==e.session_id %} (original attempt){% endif %}</option>{% endfor %}

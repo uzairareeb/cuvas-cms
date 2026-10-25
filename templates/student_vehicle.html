@@ -7,12 +7,12 @@ and the same vehicle cannot be applied for twice while a request is pending.</p>
 <div class="card" style="margin-bottom:16px">
 <h3 style="margin-top:0">Apply for a Pass</h3>
 <form method="post" action="{{ url_for('student_vehicle_apply') }}" class="form-card">
-<label>Vehicle Type *</label>
+<label>Vehicle Type <span class="req">*</span></label>
 <select name="vehicle_type" required>
 <option value="">— Choose —</option>
 {% for t in vehicle_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
 </select>
-<label>Vehicle Number * (e.g. LEA-123)</label><input name="vehicle_no" required placeholder="LEA-123">
+<label>Vehicle Number <span class="req">*</span> (e.g. LEA-123)</label><input name="vehicle_no" required placeholder="LEA-123">
 <label>Make / Model</label><input name="make_model" placeholder="e.g. Honda CG 125">
 <label>Color</label><input name="color" placeholder="e.g. Black">
 <div class="form-actions"><button class="btn green" type="submit">Request Pass</button></div>
