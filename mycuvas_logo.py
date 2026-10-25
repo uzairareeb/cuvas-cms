@@ -1,13 +1,17 @@
 """myCUVAS portal logo (gold cap + white "myCUVAS" on indigo banner).
 
-PNG 2172x724, stored as base64 text in mycuvas_logo_part01..12.py
+PNG 2172x724 RGBA, stored as base64 text in mycuvas_logo_part01..12.py
 because the GitHub push path rejects binary files (each part file is
 under 128KB). The bytes are a LOSSLESS PNG re-encode (PIL optimize=True,
-compress_level=9) of the DECODED PIXELS of the user-supplied WebP file
-(workspace/user/media_library/image/81/81925ae285c728ed6b35449adfce604b93b666c36b63695c0130654985c250db.webp,
-md5 a5ad6b485bfa0e4c05ab97e1bcb6b70c); decoded pixels are identical
-to that WebP's decoded pixels (same 2172x724 dimensions, same raw pixel
-md5 ff28d23560126e6eb40487098245428a). This REPLACED the previous
+compress_level=9) of the DECODED RGBA PIXELS of the user-supplied WebP file
+(workspace/user/media_library/image/b1/b16d9853c2aa6ed27c8b7399b1bdaccba0361c44c89cdfc92414cbfc8e75f8e5.webp,
+md5 098d480c36ae34de8edd31986f13fd1d); decoded pixels are identical
+to that WebP's decoded pixels (same 2172x724 dimensions, same raw RGBA pixel
+md5 3097bd1caf0c36fea8a5e53efa503483). The alpha channel is PRESERVED
+(RGBA mode, never flattened to RGB): all four corner pixels are fully
+transparent (alpha 0), so the banner genuinely renders with rounded
+corners on every background — the previous version had opaque black
+corners and looked rectangular on white bands. This REPLACED the previous
 myCUVAS logo — no bytes of the old logo remain. Pixels never cropped, stretched,
 recoloured, or lossy-compressed. Served by the /brand/mycuvas-logo.png
 route in app.py. The official CUVAS logo (brand_logo.py) is untouched
