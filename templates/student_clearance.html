@@ -23,8 +23,8 @@ objection, fix the issue and use <em>Request Recheck</em> on that item.</p>
 <h3>Clearance Application #{{ req.id }} — <span class="pill {{ 'paid' if req.status=='Cleared' else 'submitted' }}">{{ req.status }}</span></h3>
 <p class="muted">Applied on {{ req.created_at[:10] if req.created_at else '—' }}{% if req.completed_at %} · Completed on {{ req.completed_at[:10] }}{% endif %} · Progress: <strong>{{ cleared_count }} of {{ items|length }} cleared</strong></p>
 {% if req.status == 'Cleared' %}
-<p>🎉 <strong>All units have cleared you.</strong> Your clearance certificate is ready:</p>
-<p><a class="btn green" href="{{ url_for('student_clearance_certificate') }}">⬇ Download Clearance Certificate (PDF)</a></p>
+<p><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 5.6 2.2 2.2"/><path d="m16.2 16.2 2.2 2.2"/><path d="m18.4 5.6-2.2 2.2"/><path d="m7.6 16.2-2.2 2.2"/></svg><strong>All units have cleared you.</strong> Your clearance certificate is ready:</p>
+<p><a class="btn green" href="{{ url_for('student_clearance_certificate') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Download Clearance Certificate (PDF)</a></p>
 {% endif %}
 <table>
 <tr><th>Unit</th><th>Status</th><th>Remarks</th><th>Action By</th><th>Date</th><th></th></tr>
@@ -32,7 +32,7 @@ objection, fix the issue and use <em>Request Recheck</em> on that item.</p>
 <tr>
 <td>{{ it.unit_name }}{% if it.recheck_requested %}<br><span class="pill submitted">Recheck requested</span>{% endif %}</td>
 <td><span class="pill {{ 'paid' if it.status=='Cleared' else 'rejected' if it.status=='Objected' else 'pending' }}">{{ it.status }}</span></td>
-<td>{{ it.remarks or '—' }}{% if it.auto_note %}<br><span class="muted">🤖 {{ it.auto_note }}</span>{% endif %}</td>
+<td>{{ it.remarks or '—' }}{% if it.auto_note %}<br><span class="muted"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="12" rx="2"/><path d="M12 8V5"/><path d="M9 5h6"/><circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/></svg>{{ it.auto_note }}</span>{% endif %}</td>
 <td>{{ it.action_by or '—' }}</td>
 <td>{{ it.action_at[:10] if it.action_at else '—' }}</td>
 <td>{% if it.status == 'Objected' %}<form method="post" action="{{ url_for('student_clearance_recheck', item_id=it.id) }}"><button class="btn small" type="submit">Request Recheck</button></form>{% endif %}</td>

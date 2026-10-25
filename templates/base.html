@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}MY CUVAS — Campus Management System (Demo){% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">{% block extra_css %}{% endblock %}</head>
 <body>
 <header class="topbar"><div class="brand">MY <span>CUVAS</span> <span class="badge">DEMO</span></div>
 <nav>{% if session.get('user_id') %}<span>{{ session.display_name }} ({{ session.role }})</span><a href="{{ url_for('logout') }}">Sign out</a>{% else %}<a href="{{ url_for('landing') }}">Home</a><a href="{{ url_for('login') }}">Login</a>{% endif %}</nav></header>
