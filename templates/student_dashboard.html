@@ -92,7 +92,7 @@
 {% if vouchers %}<table><tr><th>Title</th><th>Challan #</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Remarks</th><th>Action</th></tr>
 {% for v in vouchers %}<tr><td>{{ v.title }}</td><td>{{ v.challan_no }}</td><td>{{ "{:,}".format(v.amount) }}</td>
 <td>{{ v.due_date }}{% if v.due_flag=='overdue' %}<br><span class="pill overdue">Overdue</span>{% elif v.due_flag=='soon' %}<br><span class="pill duesoon">Due soon</span>{% endif %}</td>
-<td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span>
+<td><span class="pill status-btn {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span>
 {% if v.status=='Paid' and v.paid_at %}<br><span class="muted">Paid {{ v.paid_at[:10] }}{% if v.payment_channel %} via {{ v.payment_channel }}{% endif %}</span>{% endif %}
 {% if v.status=='Proof Submitted' %}<br><span class="muted">Proof: {{ v.proof_filename }} ({{ v.payment_channel }})</span>{% endif %}</td>
 <td>{{ v.remarks }}</td>
@@ -132,6 +132,12 @@
 <table><tr><th>Voucher Title</th><th>Challan No.</th><th>Date</th><th>Description</th><th>Amount (Rs.)</th></tr>
 {% for l in ledger %}<tr{% if l.credit %} class="row-paid"{% elif l.debit and l.debit > 0 %} class="row-charge"{% endif %}><td>{{ l.voucher_title }}</td><td>{{ l.challan_no }}</td><td>{{ l.entry_date }}</td><td>{{ l.description }}</td><td>{% if l.credit %}{{ "{:,}".format(l.credit) }}{% elif l.debit %}{{ "{:,}".format(l.debit) }}{% else %}—{% endif %}</td></tr>{% endfor %}</table>
 <p style="margin-top:14px">Payable: <strong>Rs {{ "{:,}".format(payable) }}</strong> · Paid: <strong>Rs {{ "{:,}".format(paid) }}</strong> · Remission: <strong>Rs 0</strong> · Outstanding: <strong>Rs {{ "{:,}".format(outstanding) }}</strong></p>
+<div class="stmt-summary">
+<div class="stmt-box"><span class="stmt-label">Total Payable (Charged)</span><strong>Rs {{ "{:,}".format(payable) }}</strong></div>
+<div class="stmt-box"><span class="stmt-label">Total Paid</span><strong>Rs {{ "{:,}".format(paid) }}</strong></div>
+<div class="stmt-box"><span class="stmt-label">Total Remission</span><strong>Rs {{ "{:,}".format(remission) }}</strong></div>
+<div class="stmt-box due"><span class="stmt-label">Total Due / Outstanding</span><strong>Rs {{ "{:,}".format(payable - paid - remission) }}</strong></div>
+</div>
 </div></section>
 
 <section class="tab-pane" id="pane-documents" role="tabpanel"><div class="card"><h3>My Documents</h3>

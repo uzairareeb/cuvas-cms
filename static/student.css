@@ -575,3 +575,13 @@ footer { color: var(--stu-muted); }
   .feeplan-grid { grid-template-columns: 1fr; }
   .feeplan-span { grid-column: auto; }
 }
+
+/* ---- voucher status as small button-look indicators (spans, not actions) ---- */
+.main .pill.status-btn { padding: 8px 14px; min-height: 36px; border-radius: 10px; font-size: 13px; cursor: default; }
+
+/* ---- account statement summary block ---- */
+.stmt-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
+.stmt-box { flex: 1; min-width: 160px; background: #f7f8fd; border: 1px solid var(--stu-line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.stmt-box .stmt-label { color: var(--stu-muted); font-size: 13px; font-weight: 600; }
+.stmt-box strong { color: var(--stu-indigo); font-size: 20px; }
+.stmt-box.due { background: #eef0fa; }

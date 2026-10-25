@@ -678,19 +678,30 @@ def backfill_v03(db):
            WHERE voucher_id IS NULL AND challan_no IS NOT NULL""")
 
     # --- guarantee debit/credit entries for every voucher ---
+    # Guard fix (2026-10-25): the old guards counted only rows with
+    # debit>0 / credit>0, so a Rs 0 voucher never satisfied them and
+    # EVERY server start appended another zero row dated the voucher due
+    # date (live: ~186 identical rows for one zero voucher). Guards are
+    # now existence-based: a voucher is skipped once its own charged /
+    # payment row exists, whatever the amount. The extra OR branches only
+    # matter for zero-amount vouchers (for non-zero vouchers the >0
+    # branch already matches), so behaviour for real money is unchanged.
     for v in db.execute("SELECT * FROM vouchers ORDER BY id").fetchall():
+        charged_desc = f"{v['title']} charged"
         has_debit = db.execute(
-            "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND debit>0",
-            (v["id"],)).fetchone()["c"]
+            "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? "
+            "AND (debit>0 OR (description=? AND debit=0))",
+            (v["id"], charged_desc)).fetchone()["c"]
         if not has_debit:
             db.insert(
                 """INSERT INTO ledger_entries (student_id,voucher_id,voucher_title,challan_no,
                    entry_date,description,debit,credit) VALUES (?,?,?,?,?,?,?,?)""",
                 (v["student_id"], v["id"], v["title"], v["challan_no"],
-                 v["due_date"] or _today(), f"{v['title']} charged", v["amount"] or 0, 0))
+                 v["due_date"] or _today(), charged_desc, v["amount"] or 0, 0))
         if v["status"] == "Paid":
             has_credit = db.execute(
-                "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND credit>0",
+                "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? "
+                "AND (credit>0 OR (description LIKE 'Payment received — %' AND credit=0))",
                 (v["id"],)).fetchone()["c"]
             if not has_credit:
                 channel = v.get("payment_channel") or "Bank"
@@ -700,6 +711,42 @@ def backfill_v03(db):
                     (v["student_id"], v["id"], v["title"], v["challan_no"],
                      (v.get("paid_at") or _today())[:10],
                      f"Payment received — {channel}", 0, v["amount"] or 0))
+
+    # --- collapse duplicate zero ledger rows (idempotent cleanup) ---
+    # Zero rows carry no financial information (debit=0 AND credit=0), so
+    # keeping the earliest row per (student, voucher, description) and
+    # dropping the rest cannot change any total. Non-zero rows — real
+    # debits, credits, and split reversals (negative debits) — are never
+    # touched. This heals the ~186-row pile-up on the live zero voucher
+    # on the next deploy, and the fixed guards above stop it recurring.
+    db.execute(
+        """DELETE FROM ledger_entries WHERE debit=0 AND credit=0 AND id NOT IN (
+               SELECT MIN(id) FROM ledger_entries WHERE debit=0 AND credit=0
+               GROUP BY student_id, voucher_id, description)""")
+
+    # --- demo fee-plan heads for checking (guarded) ---
+    # The dashboard shows the NEWEST plan for the demo student's program +
+    # session + semester (ORDER BY id DESC). If that plan has no lines
+    # (live state: plan exists, total 0), give it the standard demo heads
+    # so the Fee Plan card shows a real breakdown. On a fresh seed the
+    # legacy lines are already attached, so this is a strict no-op there.
+    if demo and demo.get("program_id") and demo_sid:
+        shown_plan = db.execute(
+            """SELECT id FROM fee_plans WHERE program_id=? AND session_id=?
+               AND semester_no=? ORDER BY id DESC""",
+            (demo["program_id"], demo_sid, demo["current_semester"] or 3)).fetchone()
+        if shown_plan and not db.execute(
+                "SELECT COUNT(*) c FROM fee_plan_lines WHERE plan_id=?",
+                (shown_plan["id"],)).fetchone()["c"]:
+            for head, amt in [("Tuition Fee (Demo)", 30000),
+                              ("University / Institute Charges (Demo)", 8000),
+                              ("Transport Charges (Demo)", 5000),
+                              ("Library Charges (Demo)", 1500),
+                              ("Examination Charges (Demo)", 3000)]:
+                db.execute(
+                    "INSERT INTO fee_plan_lines (plan_id,head_id,head,amount) VALUES (?,?,?,?)",
+                    (shown_plan["id"], head_ids.get(head), head, amt))
+
 
 
 # ------------------------------------------------------- v0.4 results backfill
@@ -819,16 +866,47 @@ DEFAULT_SCHOLARSHIP_SCHEMES = [
 
 def backfill_v10(db):
     """Idempotent v0.10 migration: seed the two generic scholarship
-    schemes ONLY while the schemes table is empty. A strict no-op
-    afterwards, so admin edits/closures are never undone."""
-    if db.execute("SELECT COUNT(*) c FROM scholarship_schemes").fetchone()["c"]:
-        return
-    for name, provider, description, eligibility in DEFAULT_SCHOLARSHIP_SCHEMES:
-        db.insert(
-            """INSERT INTO scholarship_schemes (name,provider,description,
-               eligibility,is_open,deadline,created_at)
-               VALUES (?,?,?,?,1,NULL,?)""",
-            (name, provider, description, eligibility, _now()))
+    schemes ONLY while the schemes table is empty, so admin edits/closures
+    are never undone. Also adds one guarded demo approved scholarship for
+    checking (never twice: skipped once the demo student has any Approved
+    application)."""
+    if not db.execute("SELECT COUNT(*) c FROM scholarship_schemes").fetchone()["c"]:
+        for name, provider, description, eligibility in DEFAULT_SCHOLARSHIP_SCHEMES:
+            db.insert(
+                """INSERT INTO scholarship_schemes (name,provider,description,
+                   eligibility,is_open,deadline,created_at)
+                   VALUES (?,?,?,?,1,NULL,?)""",
+                (name, provider, description, eligibility, _now()))
+    # Demo approved scholarship for checking (guarded, Need-Based only —
+    # never the Merit scheme, which the v10 suite flow drives for this
+    # student). Lives here, not in backfill_v03, because the schemes it
+    # references are seeded by this same migration.
+    demo = db.execute(
+        "SELECT * FROM students WHERE registration_no='CUVAS-DEMO-2026-001'").fetchone()
+    if demo:
+        demo_sid = demo.get("session_id")
+        if not demo_sid and demo.get("session_name"):
+            srow = db.execute("SELECT id FROM academic_sessions WHERE name=?",
+                              (demo["session_name"],)).fetchone()
+            demo_sid = srow["id"] if srow else None
+        has_approved = db.execute(
+            "SELECT COUNT(*) c FROM scholarship_applications "
+            "WHERE student_id=? AND status='Approved'",
+            (demo["id"],)).fetchone()["c"]
+        if not has_approved:
+            scheme = db.execute(
+                "SELECT id FROM scholarship_schemes "
+                "WHERE name='Need-Based Scholarship'").fetchone()
+            if scheme:
+                db.execute(
+                    """INSERT INTO scholarship_applications
+                       (student_id,scheme_id,session_id,statement,status,admin_remarks,
+                        awarded_amount,decided_by,decided_at,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (demo["id"], scheme["id"], demo_sid,
+                     "Demo application for checking (Need-Based).", "Approved",
+                     "Approved — Demo Need-Based Scholarship for checking.",
+                     20000, "Demo Admin", _now(), _now()))
 
 
 # ------------------------------------------------- v0.11 app settings + seed
@@ -2902,7 +2980,7 @@ def student_dashboard():
         student_plan=student_plan,
         awarded_scholarships=awarded_scholarships,
         scholarship_remarks=scholarship_remarks,
-        ledger=ledger, payable=payable, paid=paid, outstanding=payable - paid,
+        ledger=ledger, payable=payable, paid=paid, remission=0, outstanding=payable - paid,
         my_documents=my_documents, doc_types=DOC_TYPES,
         my_tickets=my_tickets, ticket_categories=TICKET_CATEGORIES,
         repo_docs=repo_docs,
