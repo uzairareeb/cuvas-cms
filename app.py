@@ -699,10 +699,13 @@ def backfill_v03(db):
                 (v["student_id"], v["id"], v["title"], v["challan_no"],
                  v["due_date"] or _today(), charged_desc, v["amount"] or 0, 0))
         if v["status"] == "Paid":
+            # NOTE: the LIKE pattern is bound as a parameter, never inlined
+            # in the SQL text — a literal % in SQL breaks psycopg's
+            # placeholder parsing on Postgres (live crash 2026-10-25).
             has_credit = db.execute(
                 "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? "
-                "AND (credit>0 OR (description LIKE 'Payment received — %' AND credit=0))",
-                (v["id"],)).fetchone()["c"]
+                "AND (credit>0 OR (description LIKE ? AND credit=0))",
+                (v["id"], "Payment received — %")).fetchone()["c"]
             if not has_credit:
                 channel = v.get("payment_channel") or "Bank"
                 db.insert(
