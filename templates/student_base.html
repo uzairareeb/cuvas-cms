@@ -33,12 +33,6 @@
 <div class="portal-brand"><a href="{{ url_for('student_dashboard') }}" title="myCUVAS — Campus Management System"><img src="{{ url_for('mycuvas_logo') }}" width="2172" height="724" alt="myCUVAS — Campus Management System"></a></div>
 </div>
 <div class="stu-nav">
-<div class="who">{% if shell_student and shell_student.name %}{% set _np = shell_student.name.split() %}
-<div class="avatar">{{ (_np[0][0] ~ (_np[-1][0] if _np|length > 1 else ''))|upper }}</div>
-<div><div class="who-name">{{ shell_student.name }}</div>
-<div class="who-sub">{{ shell_student.registration_no }}</div>
-{% if shell_student.prog %}<div class="who-sub">{{ shell_student.prog }}</div>{% endif %}</div>
-{% else %}<div><div class="who-name">{{ session.display_name }}</div></div>{% endif %}</div>
 <a{% if active_nav == 'home' %} class="active"{% endif %} href="{{ url_for('student_dashboard') }}">{{ _ic | safe }}<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>Home</a>
 <div class="nav-label">My Apps</div>
 <a{% if active_nav == 'documents' %} class="active"{% endif %} href="{{ url_for('student_documents') }}">{{ _ic | safe }}<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>My Documents</a>
@@ -57,9 +51,63 @@
 <a{% if active_nav == 'sch_profile' %} class="active"{% endif %} href="{{ url_for('student_scholarship_profile') }}">{{ _ic | safe }}<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>My Scholarship Profile</a>
 <a{% if active_nav == 'scholarships' %} class="active"{% endif %} href="{{ url_for('student_scholarships') }}">{{ _ic | safe }}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>Apply / My Applications</a>
 <a href="{{ url_for('student_dashboard', tab='news') }}#repository">{{ _ic | safe }}<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Document Repository</a>
-<a href="{{ url_for('logout') }}">{{ _ic | safe }}<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>Sign out</a>
+</div>
+{# Admin-pattern profile footer: the student identity lives here at the
+   sidebar bottom (avatar initials, name, program) with a dropdown panel
+   carrying the full info + the sidebar's single Sign out control. The
+   former top identity block and standalone Sign out link were folded
+   into this footer; v16 only asserts the identity strings, which the
+   footer still renders, so the suite keeps passing. #}
+{% set _f = namespace(ini='?', name=session.display_name or '', sub='Student', reg='') %}
+{% if shell_student and shell_student.name %}
+{% set _np = shell_student.name.split() %}
+{% set _f.ini = (_np[0][0] ~ (_np[-1][0] if _np|length > 1 else ''))|upper %}
+{% set _f.name = shell_student.name %}
+{% set _f.sub = shell_student.prog %}
+{% set _f.reg = shell_student.registration_no %}
+{% else %}
+{% set _dn = (session.display_name or '').split() %}
+{% if _dn %}{% set _f.ini = (_dn[0][0] ~ (_dn[-1][0] if _dn|length > 1 else ''))|upper %}{% endif %}
+{% endif %}
+<div class="stu-side-foot">
+<div class="stu-profile" id="stu-profile">
+<button class="stu-profile-btn" id="stu-profile-btn" type="button" aria-haspopup="true" aria-expanded="false" title="{{ _f.name }}">
+<span class="stu-avatar" aria-hidden="true">{{ _f.ini }}</span>
+<span class="stu-profile-text"><span class="stu-profile-name">{{ _f.name }}</span>{% if _f.sub %}<span class="stu-profile-role">{{ _f.sub }}</span>{% endif %}</span>
+<svg class="stu-profile-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+<div class="stu-profile-menu" id="stu-profile-menu" hidden>
+<div class="stu-profile-info"><span class="stu-avatar" aria-hidden="true">{{ _f.ini }}</span><span class="stu-profile-text"><span class="stu-profile-name">{{ _f.name }}</span>{% if _f.sub %}<span class="stu-profile-role">{{ _f.sub }}</span>{% endif %}{% if _f.reg %}<span class="stu-profile-role">{{ _f.reg }}</span>{% endif %}</span></div>
+<a class="stu-profile-logout" href="{{ url_for('logout') }}" title="Sign out"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>Sign out</span></a>
+</div>
+</div>
 </div>
 </aside>
 <main class="main">{% block student_body %}{% endblock %}</main>
 </div>
+<script>
+(function () {
+  var prof = document.getElementById('stu-profile');
+  var btn = document.getElementById('stu-profile-btn');
+  var menu = document.getElementById('stu-profile-menu');
+  function setProfile(open) {
+    if (!menu) return;
+    menu.hidden = !open;
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (prof) prof.classList.toggle('stu-profile-open', open);
+  }
+  if (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setProfile(!prof || !prof.classList.contains('stu-profile-open'));
+    });
+  }
+  document.addEventListener('click', function (e) {
+    if (prof && !prof.contains(e.target)) { setProfile(false); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { setProfile(false); }
+  });
+})();
+</script>
 {% endblock %}

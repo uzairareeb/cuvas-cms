@@ -58,16 +58,6 @@ footer { color: var(--stu-muted); }
 .stu-nav::-webkit-scrollbar { width: 8px; }
 .stu-nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .22); border-radius: 8px; }
 
-/* identity block */
-.sidebar.student-sidebar .who {
-  padding: 4px 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, .18);
-  margin-bottom: 12px;
-}
-.sidebar.student-sidebar .avatar { background: #f2b705; color: #222; }
-.sidebar.student-sidebar .who-name { color: #fff; }
-.sidebar.student-sidebar .who-sub { color: var(--stu-tint-border); }
-
 /* group labels (exact .nav-label markup kept for v0.16 compatibility) */
 .sidebar.student-sidebar .nav-label {
   margin: 14px 12px 6px;
@@ -98,15 +88,110 @@ footer { color: var(--stu-muted); }
   color: var(--stu-dark);
   box-shadow: 0 2px 10px rgba(15, 23, 42, .22);
 }
-.sidebar.student-sidebar .stu-nav > a:last-child {
-  margin-top: 14px;
-  border-top: 1px solid rgba(255, 255, 255, .18);
-  padding-top: 14px;
-}
 .stu-ic { width: 20px; height: 20px; flex-shrink: 0; }
 .main h3 .stu-ic { vertical-align: -4px; margin-right: 6px; }
 .main p .stu-ic { vertical-align: -3px; }
 .sidebar.student-sidebar a.active .stu-ic { color: var(--stu-indigo); }
+
+/* ---- profile footer (admin pattern): pinned to the sidebar bottom,
+   avatar initials + name + program, dropdown opens upward with full
+   info + the sidebar's single Sign out control. ---- */
+.stu-side-foot {
+  padding: 12px 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, .18);
+  flex-shrink: 0;
+}
+.stu-profile { position: relative; }
+.stu-profile-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: rgba(255, 255, 255, .10);
+  border: 1px solid rgba(255, 255, 255, .16);
+  color: #fff;
+  border-radius: 12px;
+  padding: 9px 10px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color .18s ease;
+}
+.stu-profile-btn:hover { background: rgba(255, 255, 255, .18); }
+.stu-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--stu-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.stu-profile-text { display: grid; min-width: 0; flex: 1; }
+.stu-profile-name {
+  font-weight: 700;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stu-profile-role {
+  font-size: 11.5px;
+  color: var(--stu-tint-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stu-profile-chevron {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--stu-tint-border);
+  transition: transform .2s ease;
+}
+.stu-profile.stu-profile-open .stu-profile-chevron { transform: rotate(180deg); }
+.stu-profile-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  background: #fff;
+  color: var(--stu-text);
+  border: 1px solid var(--stu-line);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .22);
+  padding: 10px;
+  z-index: 30;
+}
+.stu-profile-menu[hidden] { display: none !important; }
+.stu-profile-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 4px 10px;
+  border-bottom: 1px solid var(--stu-line);
+  margin-bottom: 8px;
+}
+.stu-profile-info .stu-avatar { background: var(--stu-indigo); color: #fff; }
+.stu-profile-info .stu-profile-name { color: var(--stu-text); }
+.stu-profile-info .stu-profile-role { color: var(--stu-muted); }
+.stu-profile-logout {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  color: #b91c1c !important;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 8px;
+  padding: 9px 10px !important;
+  margin: 0 !important;
+}
+.stu-profile-logout:hover { background: #fef2f2 !important; }
+.stu-profile-logout .stu-ic { color: #b91c1c; width: 20px; height: 20px; }
 
 /* ---- main content ---- */
 .main { flex: 1; padding: 28px; min-width: 0; }
@@ -258,6 +343,6 @@ footer { color: var(--stu-muted); }
 
 @media (prefers-reduced-motion: reduce) {
   .main .toolbar, .main .card, .main .form-card, .tab-pane.active { animation: none; }
-  .grid .card, .btn, .tab-btn, .sidebar.student-sidebar a { transition: none; }
+  .grid .card, .btn, .tab-btn, .sidebar.student-sidebar a, .stu-profile-btn, .stu-profile-chevron { transition: none; }
   .grid .card:hover { transform: none; }
 }
