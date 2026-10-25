@@ -2,11 +2,13 @@
 
 PNG 2172x724, stored as base64 text in mycuvas_logo_part01..12.py
 because the GitHub push path rejects binary files (each part file is
-under 128KB). The bytes are a LOSSLESS PIL re-encode (optimize=True,
-compress_level=9) of the user-supplied file; decoded pixels are
-identical to the original (same 2172x724 dimensions, same raw pixel
-md5 490a9fb94de6302a00bfb9e4c4683773). Original upload md5:
-b5ed47f9f64222eab26641c48384e4fe. Pixels never cropped, stretched,
+under 128KB). The bytes are a LOSSLESS PNG re-encode (PIL optimize=True,
+compress_level=9) of the DECODED PIXELS of the user-supplied WebP file
+(workspace/user/media_library/image/81/81925ae285c728ed6b35449adfce604b93b666c36b63695c0130654985c250db.webp,
+md5 a5ad6b485bfa0e4c05ab97e1bcb6b70c); decoded pixels are identical
+to that WebP's decoded pixels (same 2172x724 dimensions, same raw pixel
+md5 ff28d23560126e6eb40487098245428a). This REPLACED the previous
+myCUVAS logo — no bytes of the old logo remain. Pixels never cropped, stretched,
 recoloured, or lossy-compressed. Served by the /brand/mycuvas-logo.png
 route in app.py. The official CUVAS logo (brand_logo.py) is untouched
 and still serves the home page.
