@@ -2815,6 +2815,14 @@ def student_dashboard():
 
     # transcript: published results only, grades derived via the shared helper
     transcript, cgpa, cumulative_ch = transcript_data(db, sid, published_only=True)
+    # plan-of-study tint: a plan course counts as completed when the student
+    # has a published, non-superseded result for it with a passing grade
+    # point — the same transcript rows that feed fulfilled_hours. (A failed
+    # attempt still counts in fulfilled_hours by the existing definition,
+    # but is deliberately NOT tinted green.)
+    completed_codes = {r["code"] for block in transcript.values()
+                       for r in block["rows"]
+                       if not r.get("superseded") and (r.get("grade_point") or 0) > 0}
 
     vouchers = db.execute("SELECT * FROM vouchers WHERE student_id=? ORDER BY id", (sid,)).fetchall()
     voucher_children = {v["id"] for v in vouchers if v.get("parent_voucher_id")}
@@ -2858,7 +2866,8 @@ def student_dashboard():
     return render_template(
         "student_dashboard.html", student=student, certs=certs, news=news,
         enrollments=enrollments, plan=plan, plan_hours=plan_hours,
-        fulfilled_hours=cumulative_ch, transcript=transcript, cgpa=cgpa,
+        fulfilled_hours=cumulative_ch, completed_codes=completed_codes,
+        transcript=transcript, cgpa=cgpa,
         vouchers=vouchers, fee_lines=fee_lines, fee_total=fee_total,
         student_plan=student_plan,
         ledger=ledger, payable=payable, paid=paid, outstanding=payable - paid,
@@ -4200,6 +4209,102 @@ def student_transcript_pdf():
     student = student_full(db, sid)
     return send_file(io.BytesIO(build_transcript_pdf(db, sid)), as_attachment=True,
                      download_name=f"transcript-{student['registration_no']}.pdf",
+                     mimetype="application/pdf")
+
+
+def build_plan_pdf(db, student_id):
+    """Plan of Study PDF bytes — the same semester tables and totals as the
+    student's web tab (plan of study for their program, indigo styling)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    student = student_full(db, student_id)
+    plan_rows = db.execute(
+        "SELECT * FROM courses WHERE program_id=? ORDER BY semester_no, code",
+        (student["program_id"],)).fetchall() if student.get("program_id") else []
+    plan = {}
+    for r in plan_rows:
+        plan.setdefault(r["semester_no"], []).append(r)
+    plan_hours = {sem: sum((x["credit_theory"] or 0) + (x["credit_lab"] or 0)
+                           for x in rows) for sem, rows in plan.items()}
+    transcript, _cgpa, cumulative_ch = transcript_data(db, student_id, published_only=True)
+    completed_codes = {r["code"] for block in transcript.values() for r in block["rows"]
+                       if not r.get("superseded") and (r.get("grade_point") or 0) > 0}
+    styles = getSampleStyleSheet()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            title=f"Plan of Study {student['registration_no']}")
+    story = _pdf_header(styles, "PLAN OF STUDY")
+    indigo = colors.HexColor("#2e3192")
+    grid = colors.HexColor("#d2d4ee")
+    tint = colors.HexColor("#eef0fa")
+    light_green = colors.HexColor("#eaf5ee")
+    info = [["Student Name", student["name"], "Registration No.", student["registration_no"]],
+            ["Program", student["prog_name"] or "—", "Department", student["dept_name"] or "—"],
+            ["Session", student["sess_name"] or student.get("session_name") or "—",
+             "Current Semester", str(student.get("current_semester") or "—")]]
+    t = Table(info, colWidths=[30 * mm, 58 * mm, 30 * mm, 64 * mm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                           ("BACKGROUND", (0, 0), (0, -1), tint),
+                           ("BACKGROUND", (2, 0), (2, -1), tint),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    totals = [["Total Plan of Study Credit Hours", str(sum(plan_hours.values()))],
+              ["Total Fulfilled Credit Hours", str(cumulative_ch)]]
+    tt = Table(totals, colWidths=[91 * mm, 91 * mm])
+    tt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
+                            ("BACKGROUND", (0, 0), (0, -1), tint),
+                            ("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story += [t, Spacer(1, 5 * mm), tt, Spacer(1, 3 * mm),
+              Paragraph("Green row = course completed (passed result published).",
+                        styles["BodyText"]),
+              Spacer(1, 5 * mm)]
+    if not plan:
+        story.append(Paragraph("No plan of study found for this program.",
+                               styles["BodyText"]))
+    for sem in sorted(plan):
+        rows = plan[sem]
+        story.append(Paragraph(
+            f"Semester {sem} — {plan_hours[sem]} credit hours", styles["Heading3"]))
+        data = [["Course Code", "Course Title", "Credit Hours (Theory-Lab)"]]
+        for c in rows:
+            data.append([c["code"], c["title"],
+                         f"{(c['credit_theory'] or 0)}-{(c['credit_lab'] or 0)}"])
+        pt = Table(data, colWidths=[32 * mm, 104 * mm, 46 * mm])
+        style_cmds = [("GRID", (0, 0), (-1, -1), 0.4, grid),
+                      ("BACKGROUND", (0, 0), (-1, 0), indigo),
+                      ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                      ("FONTSIZE", (0, 0), (-1, -1), 9),
+                      ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
+        for i, c in enumerate(rows, 1):
+            if c["code"] in completed_codes:
+                style_cmds.append(("BACKGROUND", (0, i), (-1, i), light_green))
+        pt.setStyle(TableStyle(style_cmds))
+        story += [pt, Spacer(1, 4 * mm)]
+    story += [Spacer(1, 2 * mm),
+              Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — system-generated, "
+                        f"all data shown is fictional demo data.", styles["BodyText"])]
+    doc.build(story)
+    buf.seek(0)  # AFTER build() — house lesson
+    return buf.getvalue()
+
+
+@app.route("/student/plan.pdf")
+@role_required("student")
+def student_plan_pdf():
+    db = get_db()
+    sid = session.get("student_id")
+    if not sid:
+        abort(404)
+    student = student_full(db, sid)
+    return send_file(io.BytesIO(build_plan_pdf(db, sid)), as_attachment=True,
+                     download_name=f"plan-of-study-{student['registration_no']}.pdf",
                      mimetype="application/pdf")
 
 

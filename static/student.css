@@ -471,3 +471,66 @@ footer { color: var(--stu-muted); }
   .stu-profile-menu, .main tbody tr, .main a { transition: none; animation: none; }
   .btn:active, .tab-btn:active, .sidebar.student-sidebar a:active { transform: none; }
 }
+
+/* ---- plan of study (BS semester cards; own indigo theme, not a copy
+   of any reference screenshot) ---- */
+.plan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.plan-head .btn { white-space: nowrap; }
+.plan-totals { display: flex; gap: 16px; flex-wrap: wrap; }
+.plan-total {
+  background: #fff;
+  border: 1px solid var(--stu-line);
+  border-radius: 14px;
+  box-shadow: var(--stu-shadow);
+  padding: 16px 20px;
+  min-width: 250px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.plan-total-label { color: var(--stu-muted); font-size: 13.5px; font-weight: 600; }
+.plan-total-num { color: var(--stu-indigo); font-size: 24px; font-weight: 800; }
+.plan-legend { margin: 0 0 16px; display: flex; align-items: center; gap: 8px; }
+.plan-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #eaf5ee;
+  border: 1px solid #b9d2c2;
+  flex: none;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.plan-card { padding: 0; overflow: hidden; }
+.plan-card-head {
+  background: var(--stu-indigo);
+  color: #fff;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.plan-card-head h3 { margin: 0; color: #fff; font-size: 16px; }
+.plan-card-head span { font-size: 13px; opacity: .9; white-space: nowrap; }
+.plan-card table { margin: 0; }
+.plan-card tr.done td { background: #eaf5ee; }
+.main .plan-card tr.done:hover td { background: #dff0e2; }
+
+@media (max-width: 900px) {
+  .plan-grid { grid-template-columns: 1fr; }
+  .plan-head { flex-direction: column; }
+  .plan-total { min-width: 0; flex: 1; }
+}

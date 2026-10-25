@@ -49,11 +49,25 @@
 <table><tr><th>SR</th><th>Semester Session</th><th>Course Code</th><th>Course</th><th>Faculty</th><th>Credit Hours (Theory-Lab)</th></tr>
 {% for e in enrollments %}<tr><td>{{ loop.index }}</td><td>{{ e.session_name }}</td><td>{{ e.code }}</td><td>{{ e.title }}</td><td>{{ e.faculty_name }}</td><td>{{ e.credit_theory }}-{{ e.credit_lab }}</td></tr>{% endfor %}</table></div></section>
 
-<section class="tab-pane" id="pane-plan" role="tabpanel"><div class="card"><h3>Plan Of Study</h3>
-<p>Total plan credit hours: <strong>{{ plan_hours.values()|sum }}</strong> · Fulfilled: <strong>{{ fulfilled_hours }}</strong></p>
-{% for sem, rows in plan.items() %}<h4>Semester {{ sem }} ({{ plan_hours[sem] }} credit hours)</h4>
-<table><tr><th>Code</th><th>Course</th><th>Credit Hours (Theory-Lab)</th></tr>
-{% for c in rows %}<tr><td>{{ c.code }}</td><td>{{ c.title }}</td><td>{{ c.credit_theory }}-{{ c.credit_lab }}</td></tr>{% endfor %}</table>{% endfor %}
+<section class="tab-pane" id="pane-plan" role="tabpanel">
+<div class="plan-head">
+  <div class="plan-totals">
+    <div class="plan-total"><span class="plan-total-label">Total Plan of Study Credit Hours</span><span class="plan-total-num">{{ plan_hours.values()|sum }}</span></div>
+    <div class="plan-total"><span class="plan-total-label">Total Fulfilled Credit Hours</span><span class="plan-total-num">{{ fulfilled_hours }}</span></div>
+  </div>
+  <a class="btn" href="{{ url_for('student_plan_pdf') }}"><svg class="stu-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Download PDF</a>
+</div>
+<p class="muted plan-legend"><span class="plan-swatch" aria-hidden="true"></span> Green row = course completed (passed result published)</p>
+<div class="plan-grid">
+{% for sem, rows in plan.items() %}
+  <div class="card plan-card">
+    <div class="plan-card-head"><h3>Semester {{ sem }}</h3><span>{{ plan_hours[sem] }} credit hours</span></div>
+    <table><tr><th>Course Code</th><th>Course Title</th><th>Credit Hours (Theory-Lab)</th></tr>
+    {% for c in rows %}<tr{% if c.code in completed_codes %} class="done"{% endif %}><td>{{ c.code }}</td><td>{{ c.title }}</td><td>{{ c.credit_theory }}-{{ c.credit_lab }}</td></tr>{% endfor %}</table>
+  </div>
+{% else %}
+  <p class="muted">No plan of study found for this program.</p>
+{% endfor %}
 </div></section>
 
 <section class="tab-pane" id="pane-transcript" role="tabpanel"><div class="card"><h3>Transcript</h3>
