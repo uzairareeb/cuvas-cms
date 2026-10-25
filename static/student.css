@@ -526,7 +526,7 @@ footer { color: var(--stu-muted); }
 .plan-card-head h3 { margin: 0; color: #fff; font-size: 16px; }
 .plan-card-head span { font-size: 13px; opacity: .9; white-space: nowrap; }
 .plan-card table { margin: 0; }
-.plan-card tr.done td { background: #eaf5ee; }
+.main .plan-card tr.done td { background: #eaf5ee; }
 .main .plan-card tr.done:hover td { background: #dff0e2; }
 
 @media (max-width: 900px) {
