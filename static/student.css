@@ -131,6 +131,39 @@ footer { color: var(--stu-muted); }
   font-size: 14px;
   flex-shrink: 0;
 }
+.stu-avatar-img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+/* ---- profile-pane photo ---- */
+.stu-photo-block {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.stu-photo-large {
+  width: 140px;
+  height: 175px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--stu-line);
+}
+.stu-photo-placeholder {
+  width: 140px;
+  height: 175px;
+  border: 1px solid var(--stu-line);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--stu-muted);
+  font-weight: 700;
+}
 .stu-profile-text { display: grid; min-width: 0; flex: 1; }
 .stu-profile-name {
   font-weight: 700;

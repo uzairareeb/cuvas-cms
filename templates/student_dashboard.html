@@ -26,6 +26,18 @@
 
 <section class="tab-pane" id="pane-profile" role="tabpanel"><div class="card">
 <h3>Personal &amp; Academic Profile</h3>
+<div class="stu-photo-block">
+{% if has_photo %}<img class="stu-photo-large" src="{{ url_for('student_photo') }}" alt="Student photo">
+{% else %}<div class="stu-photo-placeholder">PHOTO</div>{% endif %}
+<div>
+<form method="post" action="{{ url_for('student_photo_upload') }}" enctype="multipart/form-data">
+<label>Upload photo (PNG / JPG / WebP, max 5 MB)</label>
+<input type="file" name="photo" accept="image/png,image/jpeg,image/webp" required>
+<button class="btn small" type="submit">Upload Photo</button>
+</form>
+{% if has_photo %}<form method="post" action="{{ url_for('student_photo_remove') }}" style="margin-top:8px"><button class="btn small" type="submit">Remove Photo</button></form>{% endif %}
+</div>
+</div>
 <table>
 <tr><th>Name</th><td>{{ student.name }}</td><th>Father Name</th><td>{{ student.father_name }}</td></tr>
 <tr><th>Registration No</th><td>{{ student.registration_no }}</td><th>CNIC</th><td>{{ student.cnic or '—' }}</td></tr>

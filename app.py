@@ -308,7 +308,8 @@ def _student_shell_context():
         return {}
     try:
         st = get_db().execute(
-            """SELECT s.name, s.registration_no, p.name AS prog
+            """SELECT s.name, s.registration_no, p.name AS prog,
+               CASE WHEN s.photo IS NOT NULL THEN 1 ELSE 0 END AS has_photo
                FROM students s LEFT JOIN programs p ON p.id=s.program_id
                WHERE s.id=?""", (session["student_id"],)).fetchone()
     except Exception:
@@ -531,7 +532,10 @@ EXTRA_COLUMNS = {
               ("faculty_id", "INTEGER")],
     "students": [("cnic", "TEXT"), ("domicile", "TEXT"), ("blood_group", "TEXT"),
                  ("address_present", "TEXT"), ("address_permanent", "TEXT"),
-                 ("session_id", "INTEGER")],
+                 ("session_id", "INTEGER"),
+                 # student photo (BLOB) — served by /student/photo, drawn
+                 # into the transcript PDF header; BYTEA on Postgres.
+                 ("photo", "BYTEA" if PG else "BLOB")],
     # --- v0.3 finance columns (existing vouchers / plan lines / ledger) ---
     "vouchers": [("session_id", "INTEGER"), ("semester_no", "INTEGER"),
                  ("kind", "TEXT"), ("parent_voucher_id", "INTEGER"),
@@ -2986,7 +2990,7 @@ def student_dashboard():
         ledger=ledger, payable=payable, paid=paid, remission=0, outstanding=payable - paid,
         my_documents=my_documents, doc_types=DOC_TYPES,
         my_tickets=my_tickets, ticket_categories=TICKET_CATEGORIES,
-        repo_docs=repo_docs,
+        repo_docs=repo_docs, has_photo=bool(student.get("photo")),
         active_tab=active_tab)
 
 
@@ -4256,76 +4260,278 @@ def _pdf_header(styles, title_text):
             Paragraph(title_text, styles["Heading2"]), Spacer(1, 4 * mm)]
 
 
+def _ordinal(n):
+    if n == 1:
+        return "1st"
+    if n == 2:
+        return "2nd"
+    if n == 3:
+        return "3rd"
+    return f"{n}th"
+
+
 def build_transcript_pdf(db, student_id):
-    """Official-style transcript PDF bytes, driven by transcript_data()
-    (published results only) — the same numbers as the student's web tab."""
+    """Transcript PDF rebuilt to the reference template's layout (same
+    structure, CUVAS identity), driven by transcript_data() (published
+    results only) — the same numbers as the student's web tab.
+
+    Layout: official CUVAS logo top-left + centered university name,
+    "Transcript" and "Session: <stored session name>" on EVERY page;
+    plain label-value student info block; page-1 top-right student photo
+    (or a PHOTO placeholder box in the card-placeholder style); one table
+    with columns Course Code | Course Title | Marks | Credit Hours | QP |
+    Grade | Remarks, semester banner rows, per-semester footer rows
+    (SGPA + totals + running CGPA); summary block on the last page; the
+    round CUVAS logo as a faint (12%) center watermark BEHIND the content
+    on every page; "Note: Errors and Omissions are Excepted." + "Page X
+    of Y" footers on every page.
+
+    Deliberately OMITTED (the system holds no such data, so nothing is
+    invented): a QR code (no QR/verify mechanism exists in the codebase);
+    Marks as "obtained/total" and Percentage (results store obtained
+    marks only — no total-marks field); Date of Admission / Result
+    Declared on / Result Issued on (no such columns or timestamps);
+    Overall Grade (no CGPA-to-grade mapping exists in the grade scale).
+    Roll No. uses registration_no, exactly as the template's own data
+    does (the system has no separate roll number)."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
-    from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
-                                    Table, TableStyle)
+    from reportlab.platypus import (Image as RLImage, Paragraph,
+                                    SimpleDocTemplate, Spacer, Table,
+                                    TableStyle)
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas as pdfcanvas
+    import base64 as _b64
+    from brand_logo import CUVAS_LOGO_B64
+    from transcript_watermark import TRANSCRIPT_WATERMARK_B64
 
     student = student_full(db, student_id)
-    transcript, cgpa, _ch = transcript_data(db, student_id, published_only=True)
+    transcript, cgpa, cumulative_ch = transcript_data(db, student_id, published_only=True)
+    sess_line = student["sess_name"] or student.get("session_name") or "—"
+    # session name per semester, derived from the rows' own session ids
+    # (exactly the web tab's derivation — never invented).
+    session_names = {s["id"]: s["name"] for s in db.execute(
+        "SELECT id, name FROM academic_sessions").fetchall()}
+    transcript_sessions = {}
+    for sem, block in transcript.items():
+        sids = [r.get("session_id") for r in block["rows"]
+                if not r.get("superseded") and r.get("session_id")]
+        if not sids:
+            sids = [r.get("session_id") for r in block["rows"] if r.get("session_id")]
+        transcript_sessions[sem] = session_names.get(sids[0]) if sids else None
+
+    logo_bytes = _b64.b64decode(CUVAS_LOGO_B64)
+    wm_bytes = _b64.b64decode(TRANSCRIPT_WATERMARK_B64)
+
+    def _onpage(canv, doc):
+        """Header + watermark + footer note on EVERY page. Runs before
+        the flowables, so the watermark stays BEHIND the content."""
+        canv.saveState()
+        # center watermark: round CUVAS logo, 12% alpha baked into the
+        # module bytes, drawn centered with its alpha mask.
+        wm = ImageReader(io.BytesIO(wm_bytes))
+        wm_size = 135 * mm
+        canv.drawImage(wm, (A4[0] - wm_size) / 2, (A4[1] - wm_size) / 2,
+                       width=wm_size, height=wm_size, mask="auto")
+        # header: official logo top-left (aspect preserved, never
+        # stretched), then centered university name / title / session.
+        logo = ImageReader(io.BytesIO(logo_bytes))
+        lw = 30 * mm
+        lh = lw * 160 / 315
+        canv.drawImage(logo, 14 * mm, A4[1] - 10 * mm - lh,
+                       width=lw, height=lh, mask="auto",
+                       preserveAspectRatio=True)
+        canv.setFillColor(colors.black)
+        canv.setFont("Helvetica-Bold", 12.5)
+        canv.drawCentredString(
+            A4[0] / 2,
+            A4[1] - 31 * mm,
+            "CHOLISTAN UNIVERSITY OF VETERINARY AND ANIMAL SCIENCES, BAHAWALPUR")
+        canv.setFont("Helvetica-Bold", 12)
+        canv.drawCentredString(A4[0] / 2, A4[1] - 36.5 * mm, "Transcript")
+        canv.setFont("Helvetica", 10)
+        canv.drawCentredString(A4[0] / 2, A4[1] - 41 * mm, f"Session: {sess_line}")
+        # footer note (page numbers are added by _NumberedCanvas).
+        canv.setFont("Helvetica", 8.5)
+        canv.drawString(14 * mm, 10 * mm, "Note: Errors and Omissions are Excepted.")
+        canv.restoreState()
+
+    class _NumberedCanvas(pdfcanvas.Canvas):
+        """Two-pass "Page X of Y": page states are replayed at save()
+        time so the total page count is known. Draws ONLY the page
+        number line (the rest of the footer lives in _onpage)."""
+        _mm = mm
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved = []
+
+        def showPage(self):
+            self._saved.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._saved)
+            for state in self._saved:
+                self.__dict__.update(state)
+                self.setFont("Helvetica", 8.5)
+                self.drawCentredString(self._pagesize[0] / 2, 10 * self._mm,
+                                       f"Page {self._pageNumber} of {total}")
+                super().showPage()
+            super().save()
+
+    def _photo_cell():
+        """Page-1 top-right photo: the student's DB photo converted to
+        PNG (handles PNG/JPG/WebP uniformly), else the card-style
+        PHOTO placeholder box."""
+        blob = student.get("photo")
+        if blob:
+            try:
+                from PIL import Image as _PILImage
+                im = _PILImage.open(io.BytesIO(bytes(blob))).convert("RGB")
+                buf = io.BytesIO()
+                im.save(buf, "PNG")
+                buf.seek(0)
+                return RLImage(buf, width=26 * mm, height=33 * mm,
+                               kind="proportional")
+            except Exception:
+                pass
+        ph = Table([[Paragraph("PHOTO", getSampleStyleSheet()["BodyText"])]],
+                   colWidths=[30 * mm], rowHeights=[36 * mm])
+        ph.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#444444")),
+                                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        return ph
+
     styles = getSampleStyleSheet()
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm,
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=44 * mm, bottomMargin=14 * mm,
                             leftMargin=14 * mm, rightMargin=14 * mm,
                             title=f"Transcript {student['registration_no']}")
-    story = _pdf_header(styles, "OFFICIAL TRANSCRIPT (Demo)")
-    green = colors.HexColor("#0b6b3a")
-    grid = colors.HexColor("#b9d2c2")
-    light = colors.HexColor("#eaf5ee")
-    info = [["Student Name", student["name"], "Registration No.", student["registration_no"]],
-            ["Program", student["prog_name"] or "—", "Department", student["dept_name"] or "—"],
-            ["Session", student["sess_name"] or student.get("session_name") or "—",
-             "Current Semester", str(student.get("current_semester") or "—")]]
-    t = Table(info, colWidths=[30 * mm, 58 * mm, 30 * mm, 64 * mm])
-    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
-                           ("BACKGROUND", (0, 0), (0, -1), light),
-                           ("BACKGROUND", (2, 0), (2, -1), light),
-                           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
-    story += [t, Spacer(1, 5 * mm)]
+    story = []
+    # --- student info block: plain label-value, two columns, no grid ---
+    reg = student["registration_no"]
+    info = [[Paragraph("Name", styles["BodyText"]),
+             Paragraph(student["name"] or "—", styles["BodyText"]),
+             Paragraph("Father's Name", styles["BodyText"]),
+             Paragraph(student["father_name"] or "—", styles["BodyText"])],
+            [Paragraph("Roll No.", styles["BodyText"]),
+             Paragraph(reg or "—", styles["BodyText"]),
+             Paragraph("CNIC", styles["BodyText"]),
+             Paragraph(student["cnic"] or "—", styles["BodyText"])],
+            [Paragraph("Registration No.", styles["BodyText"]),
+             Paragraph(reg or "—", styles["BodyText"]),
+             Paragraph("Program", styles["BodyText"]),
+             Paragraph(student["prog_name"] or "—", styles["BodyText"])],
+            [Paragraph("Date of Birth", styles["BodyText"]),
+             Paragraph(student["dob"] or "—", styles["BodyText"]),
+             Paragraph("", styles["BodyText"]),
+             Paragraph("", styles["BodyText"])]]
+    it = Table(info, colWidths=[30 * mm, 44 * mm, 30 * mm, 44 * mm])
+    it.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                            ("TOPPADDING", (0, 0), (-1, -1), 1),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+    combo = Table([[it, _photo_cell()]], colWidths=[148 * mm, 34 * mm])
+    combo.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                               ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 0),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    story += [combo, Spacer(1, 5 * mm)]
     if not transcript:
         story.append(Paragraph("No published results yet.", styles["BodyText"]))
-    for sem in sorted(transcript):
-        block = transcript[sem]
-        story.append(Paragraph(f"Semester {sem} — SGPA: {block['sgpa']:.2f}",
-                               styles["Heading3"]))
-        rows = [["Code", "Course Title", "Cr. Hrs", "Marks", "Grade", "Grade Points", "Quality Points"]]
-        for r in block["rows"]:
-            title = r["title"] + (" (Repeated)" if r.get("superseded") else "")
-            rows.append([r["code"], title, str(r["credits"]), r["marks_display"],
-                         r["grade"] or "—",
-                         f"{r['grade_point']:.2f}" if r["grade_point"] is not None else "—",
-                         f"{r['quality_points']:.2f}"])
-        rows.append(["", f"Semester SGPA", "", "", "", "", f"{block['sgpa']:.2f}"])
-        lt = Table(rows, colWidths=[16 * mm, 74 * mm, 14 * mm, 16 * mm, 14 * mm, 22 * mm, 26 * mm])
-        lt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, grid),
-                                ("BACKGROUND", (0, 0), (-1, 0), green),
-                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                                ("BACKGROUND", (0, -1), (-1, -1), light),
-                                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                                ("ALIGN", (2, 0), (-1, -1), "CENTER")]))
-        story += [lt, Spacer(1, 4 * mm)]
+    else:
+        grid = colors.HexColor("#888888")
+        tint = colors.HexColor("#f2f2f2")
+        rows = [["Course Code", "Course Title", "Marks", "Credit Hours",
+                 "QP", "Grade", "Remarks"]]
+        style_cmds = [("GRID", (0, 0), (-1, -1), 0.4, grid),
+                      ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                      ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                      ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                      ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+                      ("ALIGN", (1, 0), (1, -1), "LEFT")]
+        total_marks, total_qp = 0.0, 0.0
+        for sem in sorted(transcript):
+            block = transcript[sem]
+            sname = transcript_sessions.get(sem)
+            banner = f"{_ordinal(sem)} Semester" + (f" {sname}" if sname else "")
+            bi = len(rows)
+            rows.append([banner, "", "", "", "", "", ""])
+            style_cmds += [(f"SPAN", (0, bi), (-1, bi)),
+                           ("ALIGN", (0, bi), (-1, bi), "CENTER"),
+                           ("FONTNAME", (0, bi), (-1, bi), "Helvetica-Bold"),
+                           ("BACKGROUND", (0, bi), (-1, bi), tint)]
+            marks_sum, th_sum, lab_sum, qp_sum = 0.0, 0, 0, 0.0
+            any_marks = False
+            for r in block["rows"]:
+                sup = r.get("superseded")
+                rows.append([r["code"], r["title"], r["marks_display"],
+                             f"{r['credits']} ({r['credit_theory'] or 0}-{r['credit_lab'] or 0})",
+                             f"{r['quality_points']:g}",
+                             r["grade"] or "—",
+                             "Repeated" if sup else (r.get("remarks") or "")])
+                if not sup:
+                    th_sum += r["credit_theory"] or 0
+                    lab_sum += r["credit_lab"] or 0
+                    qp_sum += r["quality_points"] or 0.0
+                    m = r.get("marks_obtained")
+                    if m is not None and not r.get("is_absent"):
+                        marks_sum += m
+                        any_marks = True
+            total_marks += marks_sum
+            total_qp += qp_sum
+            ch_tot = th_sum + lab_sum
+            fi = len(rows)
+            rows.append([f"SGPA: {block['sgpa']:.2f}", "",
+                         f"{marks_sum:g}" if any_marks else "—",
+                         f"{ch_tot} ({th_sum}-{lab_sum})",
+                         f"{qp_sum:g}", "",
+                         f"CGPA: {block['cgpa']:.2f}"])
+            style_cmds += [(f"SPAN", (0, fi), (1, fi)),
+                           ("FONTNAME", (0, fi), (-1, fi), "Helvetica-Bold"),
+                           ("BACKGROUND", (0, fi), (-1, fi), tint)]
+        lt = Table(rows, colWidths=[24 * mm, 62 * mm, 16 * mm, 22 * mm,
+                                    16 * mm, 14 * mm, 28 * mm],
+                   repeatRows=1)
+        lt.setStyle(TableStyle(style_cmds))
+        story += [lt, Spacer(1, 6 * mm)]
+        # --- final summary block (last page only: it closes the story) ---
+        summary = [[Paragraph("Marks:", styles["BodyText"]),
+                    Paragraph(f"{total_marks:g}", styles["BodyText"])],
+                   [Paragraph("Total Quality Points:", styles["BodyText"]),
+                    Paragraph(f"{total_qp:g}", styles["BodyText"])],
+                   [Paragraph("Total Credit Hours:", styles["BodyText"]),
+                    Paragraph(str(cumulative_ch), styles["BodyText"])],
+                   [Paragraph("Cumulative Grade Point Average:", styles["BodyText"]),
+                    Paragraph(f"{cgpa:.2f}", styles["BodyText"])]]
+        st = Table(summary, colWidths=[70 * mm, 112 * mm])
+        st.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
+        story += [st, Spacer(1, 6 * mm)]
     if any(r.get("superseded") for b in transcript.values() for r in b["rows"]):
         story.append(Paragraph(
-            "Note: a course marked (Repeated) is an earlier attempt that was "
+            "Note: a course marked Repeated is an earlier attempt that was "
             "superseded by a later attempt of the same course — only the "
             "latest attempt counts towards the SGPA/CGPA above.",
             styles["BodyText"]))
         story.append(Spacer(1, 3 * mm))
-    story += [Spacer(1, 2 * mm),
-              Paragraph(f"<b>Cumulative GPA (CGPA): {cgpa:.2f}</b>", styles["Heading3"]),
-              Spacer(1, 6 * mm),
-              Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — system-generated, "
-                        f"all data shown is fictional demo data.", styles["BodyText"])]
-    doc.build(story)
+    story.append(Paragraph(f"Generated on {_now()} by MY CUVAS (Demo) — system-generated, "
+                           f"all data shown is fictional demo data.",
+                           styles["BodyText"]))
+    doc.build(story, onFirstPage=_onpage, onLaterPages=_onpage,
+              canvasmaker=_NumberedCanvas)
     buf.seek(0)  # AFTER build() — house lesson
     return buf.getvalue()
+
 
 
 @app.route("/student/transcript.pdf")
@@ -4704,6 +4910,86 @@ def student_document_download(doc_id):
     if not doc:
         abort(404)
     return _serve_blob(doc)
+
+
+# ------------------------------------------------------- student photo
+# Own photo only: every route below keys off session["student_id"] and
+# takes NO student id parameter, so one student can never address
+# another student's photo. Stored as a BLOB on the students row
+# (EXTRA_COLUMNS, BYTEA on Postgres); the mimetype is sniffed from magic
+# bytes at serve time, so no second column is needed.
+PHOTO_EXTS = {"png", "jpg", "jpeg", "webp"}
+
+
+def _photo_mimetype(blob):
+    """Content-type sniffed from magic bytes (never from the filename)."""
+    if blob[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if blob[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _read_photo_upload(f):
+    """Validate a photo upload: PNG/JPG/JPEG/WebP only, at most the app's
+    existing per-file cap (MAX_UPLOAD_BYTES, 5 MB — same limit as document
+    uploads; the global 10 MB request cap applies on top). Returns
+    (blob, error_message) — exactly one of them is None."""
+    if not f or not f.filename:
+        return None, "Please choose a photo first."
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in PHOTO_EXTS:
+        return None, "Only PNG, JPG or WebP photos are allowed."
+    blob = f.read()
+    if not blob:
+        return None, "That file is empty."
+    if len(blob) > MAX_UPLOAD_BYTES:
+        return None, "That file is too large — the limit is 5 MB."
+    if not _photo_mimetype(blob):
+        return None, "That file is not a valid PNG, JPG or WebP image."
+    return blob, None
+
+
+@app.route("/student/photo")
+@role_required("student")
+def student_photo():
+    """Serve the logged-in student's own photo, inline for <img> use."""
+    db = get_db()
+    row = db.execute("SELECT photo FROM students WHERE id=?",
+                     (session.get("student_id"),)).fetchone()
+    if not row or not row.get("photo"):
+        abort(404)
+    blob = bytes(row["photo"])
+    return send_file(io.BytesIO(blob), mimetype=_photo_mimetype(blob) or "image/jpeg",
+                     as_attachment=False, download_name="photo")
+
+
+@app.route("/student/photo", methods=["POST"])
+@role_required("student")
+def student_photo_upload():
+    db = get_db()
+    blob, err = _read_photo_upload(request.files.get("photo"))
+    if err:
+        flash(err, "error")
+        return redirect(url_for("student_dashboard", tab="profile"))
+    db.execute("UPDATE students SET photo=? WHERE id=?",
+               (blob, session.get("student_id")))
+    db.commit()
+    flash("Photo uploaded.", "ok")
+    return redirect(url_for("student_dashboard", tab="profile"))
+
+
+@app.route("/student/photo/remove", methods=["POST"])
+@role_required("student")
+def student_photo_remove():
+    db = get_db()
+    db.execute("UPDATE students SET photo=NULL WHERE id=?",
+               (session.get("student_id"),))
+    db.commit()
+    flash("Photo removed.", "ok")
+    return redirect(url_for("student_dashboard", tab="profile"))
 
 
 @app.route("/student/documents/<int:doc_id>/delete", methods=["POST"])
