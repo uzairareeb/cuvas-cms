@@ -693,3 +693,11 @@ footer { color: var(--adm-muted); }
   height: 16px;
   cursor: pointer;
 }
+/* Armed bulk button: first click arms the action (inline two-step
+   confirm), second click submits. Never a native dialog. */
+.bulk-bar [data-armed="1"] {
+  background: var(--adm-blue-dark);
+  border-color: var(--adm-blue-dark);
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(46, 49, 146, 0.25);
+}
