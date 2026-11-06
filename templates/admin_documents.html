@@ -9,8 +9,16 @@
 <button class="btn green" type="submit">Filter</button>
 <a class="btn ghost" href="{{ url_for('admin_documents') }}">Reset</a></form>
 
-<table><tr><th>Student</th><th>Document</th><th>File</th><th>Status</th><th>Uploaded</th><th>Reviewed</th><th>Actions</th></tr>
-{% for d in rows %}<tr><td>{{ d.student_name }}<br><span class="muted">{{ d.registration_no }}</span></td>
+<form method="post" action="{{ url_for('admin_documents_bulk') }}" class="bulk-bar bulk-form">
+<input type="hidden" name="ids" class="bulk-ids">
+<span class="bulk-count">0 selected</span>
+<input type="text" name="remarks" placeholder="Remarks (optional — applied to every selected row)" style="min-width:280px">
+<button class="btn" type="submit" name="bulk_action" value="verify" data-confirm="Verify {n} selected document(s)?">Verify selected</button>
+<button class="btn danger" type="submit" name="bulk_action" value="reject" data-confirm="Reject {n} selected document(s)?">Reject selected</button>
+<span class="muted">Only Pending documents change; others are skipped and reported.</span></form>
+
+<table><tr><th><input type="checkbox" class="bulk-select-all" title="Select all on this page"></th><th>Student</th><th>Document</th><th>File</th><th>Status</th><th>Uploaded</th><th>Reviewed</th><th>Actions</th></tr>
+{% for d in rows %}<tr><td><input type="checkbox" class="bulk-check" value="{{ d.id }}" title="Select {{ d.file_name }}"></td><td>{{ d.student_name }}<br><span class="muted">{{ d.registration_no }}</span></td>
 <td>{{ d.doc_type }}</td><td>{{ d.file_name }}</td>
 <td><span class="pill {{ 'paid' if d.status=='Verified' else 'rejected' if d.status=='Rejected' else 'pending' }}">{{ d.status }}</span>
 {% if d.admin_remarks %}<br><span class="muted">{{ d.admin_remarks }}</span>{% endif %}</td>
@@ -23,5 +31,5 @@
 <form method="post" action="{{ url_for('admin_document_reject', doc_id=d.id) }}">
 <input name="remarks" placeholder="Reason for rejection" style="width:170px;margin:0;padding:6px">
 <button class="btn small danger" type="submit">Reject</button></form></td></tr>
-{% else %}<tr><td colspan="7">No documents match.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="8">No documents match.</td></tr>{% endfor %}</table>
 {% endblock %}

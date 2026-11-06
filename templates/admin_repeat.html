@@ -20,10 +20,18 @@
 <input type="text" name="q" value="{{ q }}" placeholder="Search name / registration no">
 <button class="btn" type="submit">Search</button>
 </form>
+<form method="post" action="{{ url_for('admin_repeat_bulk') }}" class="bulk-bar bulk-form">
+<input type="hidden" name="ids" class="bulk-ids">
+<span class="bulk-count">0 selected</span>
+<input type="text" name="remarks" placeholder="Reason for rejection (required when rejecting)" style="min-width:280px">
+<button class="btn" type="submit" name="bulk_action" value="approve" data-confirm="Approve {n} selected request(s) and issue each repeat fee voucher?">Approve selected</button>
+<button class="btn danger" type="submit" name="bulk_action" value="reject" data-confirm="Reject {n} selected request(s) with the remark above?">Reject selected</button>
+<span class="muted">Only Requested rows change; others are skipped and reported.</span></form>
 <table>
-<tr><th>Student</th><th>Course</th><th>Type</th><th>From → Target Session</th><th>Reason</th><th>Status</th><th>Fee Voucher</th><th>Decided By</th><th>Actions</th></tr>
+<tr><th><input type="checkbox" class="bulk-select-all" title="Select all on this page"></th><th>Student</th><th>Course</th><th>Type</th><th>From → Target Session</th><th>Reason</th><th>Status</th><th>Fee Voucher</th><th>Decided By</th><th>Actions</th></tr>
 {% for r in rows %}
 <tr>
+<td><input type="checkbox" class="bulk-check" value="{{ r.id }}" title="Select request #{{ r.id }}"></td>
 <td>{{ r.student_name }}<br><span class="muted">{{ r.registration_no }} · {{ r.prog_name or '—' }}</span></td>
 <td><strong>{{ r.course_code }}</strong> — {{ r.course_title }}<br><span class="muted">{{ (r.credit_theory or 0) + (r.credit_lab or 0) }} credit hours · Semester {{ r.course_semester }}</span></td>
 <td>{{ r.kind }}</td>
@@ -49,7 +57,7 @@
 </td>
 </tr>
 {% else %}
-<tr><td colspan="9" class="muted">No repeat requests match.</td></tr>
+<tr><td colspan="10" class="muted">No repeat requests match.</td></tr>
 {% endfor %}
 </table>
 <p class="muted">Approving issues a normal fee voucher (kind “Repeat”) in the student's Financial Voucher tab with a debit in the ledger; the student uploads the paid proof there and, once an admin verifies it on the voucher page, the request flips to <strong>Enrolled</strong> and the student joins the course's marks sheet and roster for the target session. Approval cannot be undone from here — a decided request is final.</p>

@@ -1,10 +1,10 @@
 {% extends "admin_base.html" %}
-{% block admin_body %}<div class="toolbar"><h2>Vouchers <span class="muted">({{ counts.total }})</span></h2>
+{% block admin_body %}{% set role = session.get('role') %}<div class="toolbar"><h2>Vouchers <span class="muted">({{ counts.total }})</span></h2>
 <div><a class="btn green" href="{{ url_for('admin_voucher_generate') }}">+ Generate Vouchers</a></div></div>
 <div class="grid" style="margin-bottom:18px">
 <div class="card kpi"><div class="num">{{ counts['Pending'] }}</div><div class="lbl">Pending</div></div>
-<div class="card kpi gold"><div class="num">{{ counts['Proof Submitted'] }}</div><div class="lbl">Proof Submitted</div></div>
-<div class="card kpi teal"><div class="num">{{ counts['Paid'] }}</div><div class="lbl">Paid</div></div>
+<div class="card kpi indigo-soft"><div class="num">{{ counts['Proof Submitted'] }}</div><div class="lbl">Proof Submitted</div></div>
+<div class="card kpi indigo-dark"><div class="num">{{ counts['Paid'] }}</div><div class="lbl">Paid</div></div>
 <div class="card kpi red"><div class="num">{{ counts['Split into Installments'] }}</div><div class="lbl">Split into Installments</div></div>
 </div>
 <form method="get" class="filter-bar">
@@ -17,11 +17,18 @@
 {% for s in sessions %}<option value="{{ s.id }}" {{ 'selected' if args.get('session_id')==s.id|string else '' }}>{{ s.name }}</option>{% endfor %}</select>
 <button class="btn green" type="submit">Filter</button>
 <a class="btn ghost" href="{{ url_for('admin_vouchers') }}">Reset</a></form>
-<table><tr><th>Challan #</th><th>Student</th><th>Title</th><th>Kind</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
-{% for v in rows %}<tr><td>{{ v.challan_no }}</td><td>{{ v.student_name }}<br><span class="muted">{{ v.registration_no }}</span></td><td>{{ v.title }}</td><td>{{ v.kind or 'semester' }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date or '—' }}</td>
+{% if role == 'admin' %}<form method="post" action="{{ url_for('admin_vouchers_bulk') }}" class="bulk-bar bulk-form">
+<input type="hidden" name="ids" class="bulk-ids">
+<span class="bulk-count">0 selected</span>
+<input type="text" name="remark" placeholder="Rejection remark (optional — used only when rejecting)" style="min-width:280px">
+<button class="btn" type="submit" name="bulk_action" value="verify" data-confirm="Verify {n} selected proof(s) — each becomes Paid with its ledger credit?">Verify selected</button>
+<button class="btn danger" type="submit" name="bulk_action" value="reject" data-confirm="Reject {n} selected proof(s) — each voucher returns to Pending?">Reject selected</button>
+<span class="muted">Only Proof Submitted rows change; others are skipped and reported. Selection applies to this page only.</span></form>{% endif %}
+<table><tr>{% if role == 'admin' %}<th><input type="checkbox" class="bulk-select-all" title="Select all on this page"></th>{% endif %}<th>Challan #</th><th>Student</th><th>Title</th><th>Kind</th><th>Amount (Rs)</th><th>Due Date</th><th>Status</th><th>Actions</th></tr>
+{% for v in rows %}<tr>{% if role == 'admin' %}<td><input type="checkbox" class="bulk-check" value="{{ v.id }}" title="Select {{ v.challan_no }}"></td>{% endif %}<td>{{ v.challan_no }}</td><td>{{ v.student_name }}<br><span class="muted">{{ v.registration_no }}</span></td><td>{{ v.title }}</td><td>{{ v.kind or 'semester' }}</td><td>{{ "{:,}".format(v.amount) }}</td><td>{{ v.due_date or '—' }}</td>
 <td><span class="pill {{ 'paid' if v.status=='Paid' else 'submitted' if v.status=='Proof Submitted' else 'split' if v.status=='Split into Installments' else 'pending' }}">{{ v.status }}</span></td>
 <td class="actions"><a class="btn small ghost" href="{{ url_for('admin_voucher_detail', voucher_id=v.id) }}">Detail</a>
 <a class="btn small" href="{{ url_for('admin_voucher_challan', voucher_id=v.id) }}">Challan PDF</a>
 {% if v.status=='Proof Submitted' %}<a class="btn small green" href="{{ url_for('admin_voucher_detail', voucher_id=v.id) }}">Verify Proof</a>{% endif %}</td></tr>
-{% else %}<tr><td colspan="8">No vouchers match.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="{{ 9 if role == 'admin' else 8 }}">No vouchers match.</td></tr>{% endfor %}</table>
 {% endblock %}

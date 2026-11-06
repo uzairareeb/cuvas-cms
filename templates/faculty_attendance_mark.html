@@ -6,6 +6,10 @@ Class date: <strong>{{ class_date }}</strong>{% if marks %} · This date was alr
 
 <form method="post" action="{{ url_for('faculty_attendance_mark', assignment_id=a.id, date=class_date) }}">
 <input type="hidden" name="date" value="{{ class_date }}">
+{% if students %}<div class="form-actions" style="margin-bottom:12px">
+<button class="btn ghost" type="button" id="mark-all-present">Mark all Present</button>
+<button class="btn ghost" type="button" id="mark-all-absent">Mark all Absent</button>
+<span class="muted">Sets every row's status — press Save Attendance to apply.</span></div>{% endif %}
 <table><tr><th>Reg. No</th><th>Student</th><th>Status</th></tr>
 {% for s in students %}<tr><td>{{ s.registration_no }}</td><td>{{ s.name }}</td>
 <td><select name="status_{{ s.id }}">{% for st in statuses %}<option value="{{ st }}" {{ 'selected' if marks.get(s.id, 'Present') == st else '' }}>{{ st }}</option>{% endfor %}</select></td></tr>
@@ -13,4 +17,17 @@ Class date: <strong>{{ class_date }}</strong>{% if marks %} · This date was alr
 </table>
 {% if students %}<div class="form-actions"><button class="btn green" type="submit">💾 Save Attendance</button></div>{% endif %}
 </form>
+<script>
+(function () {
+  function markAll(value) {
+    document.querySelectorAll('select[name^="status_"]').forEach(function (sel) {
+      sel.value = value;
+    });
+  }
+  var p = document.getElementById('mark-all-present');
+  var a = document.getElementById('mark-all-absent');
+  if (p) p.addEventListener('click', function () { markAll('Present'); });
+  if (a) a.addEventListener('click', function () { markAll('Absent'); });
+})();
+</script>
 {% endblock %}

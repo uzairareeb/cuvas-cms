@@ -2239,6 +2239,36 @@ def _student_filter_sql(args):
     return where, params
 
 
+# ------------------------------------------------------------ bulk actions
+def _parse_bulk_ids(form):
+    """Bulk-selection ids from a bulk bar: a comma-separated list of ints.
+    Non-numeric junk is dropped here; the caller reports unknown ids as
+    skipped, so nothing is ever applied silently."""
+    ids, seen = [], set()
+    for part in (form.get("ids", "") or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            i = int(part)
+            if i not in seen:
+                seen.add(i)
+                ids.append(i)
+    return ids
+
+
+def _bulk_flash(verb, done, skipped):
+    """Result summary for a bulk run: how many succeeded, and — never
+    silently — how many were skipped and why. skipped = [(id, reason)]."""
+    if skipped:
+        reasons = {}
+        for _i, reason in skipped:
+            reasons[reason] = reasons.get(reason, 0) + 1
+        detail = ", ".join(f"{c} {r}" for r, c in reasons.items())
+        flash(f"Bulk {verb}: {done} done, {len(skipped)} skipped "
+              f"({detail}).", "ok" if done else "error")
+    else:
+        flash(f"Bulk {verb}: {done} done.", "ok")
+
+
 @app.route("/admin/students")
 @role_required("admin", "accounts", "coe")
 def admin_students():
@@ -2258,7 +2288,48 @@ def admin_students():
     return render_template(
         "admin_students.html", rows=rows, total=total, page=page, pages=pages,
         departments=dept_options(db), programs=program_options(db),
-        sessions=session_options(db), args=request.args)
+        sessions=session_options(db), statuses=STUDENT_STATUSES,
+        args=request.args)
+
+
+@app.route("/admin/students/bulk-status", methods=["POST"])
+@role_required("admin")
+def admin_students_bulk_status():
+    """Bulk status change for the students ticked on the list page
+    (current page only). Same values and validation as the single
+    student edit form; no other student field is touched, so there are
+    no side effects to replicate (the single edit only syncs the login
+    display name when the NAME changes, which bulk never does)."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    status = request.form.get("status", "").strip()
+    if not ids:
+        flash("No students selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_students"))
+    if status not in STUDENT_STATUSES:
+        flash("Invalid student status.", "error")
+        return redirect(url_for("admin_students"))
+    done, skipped = 0, []
+    try:
+        for sid in ids:
+            row = db.execute("SELECT id FROM students WHERE id=?",
+                             (sid,)).fetchone()
+            if not row:
+                skipped.append((sid, "not found"))
+                continue
+            db.execute("UPDATE students SET status=? WHERE id=?",
+                       (status, sid))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk status change failed — nothing was changed.", "error")
+        return redirect(url_for("admin_students"))
+    log_audit("bulk_student_status",
+              f"{done} student(s) set to {status}; {len(skipped)} skipped")
+    _bulk_flash(f"status change to {status}", done, skipped)
+    return redirect(url_for("admin_students"))
 
 
 def _student_form_values(db, student=None):
@@ -3539,6 +3610,28 @@ def admin_voucher_proof(voucher_id):
                      mimetype=v.get("proof_mimetype") or "application/octet-stream")
 
 
+def _apply_voucher_verify(db, v):
+    """The mutation half of voucher verification, shared by the single
+    verify route and bulk verify so both produce EXACTLY the same
+    outcome: mark Paid, record the ledger credit exactly once, and
+    activate a linked repeat request. Caller owns the status checks
+    and the commit."""
+    db.execute("UPDATE vouchers SET status='Paid', paid_at=? WHERE id=?",
+               (_now(), v["id"]))
+    already = db.execute(
+        "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND credit>0",
+        (v["id"],)).fetchone()["c"]
+    if not already:  # credit exactly once
+        channel = v.get("payment_channel") or "Bank"
+        ledger_add(db, v, _today(), f"Payment received — {channel}", credit=v["amount"] or 0)
+    # --- v0.11: a verified repeat voucher activates its repeat request
+    # (request -> Enrolled + the target-session enrollment). Runs inside
+    # the same commit; the helper is a no-op unless the request is still
+    # 'Approved', so re-verification can never double-activate. ---
+    if v.get("repeat_request_id"):
+        activate_repeat_request(db, v["repeat_request_id"])
+
+
 @app.route("/admin/vouchers/<int:voucher_id>/verify", methods=["POST"])
 @role_required("admin", "accounts")
 def admin_voucher_verify(voucher_id):
@@ -3553,25 +3646,65 @@ def admin_voucher_verify(voucher_id):
     if v["status"] != "Proof Submitted":
         flash("Only a voucher with a submitted paid proof can be verified.", "error")
         return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
-    db.execute("UPDATE vouchers SET status='Paid', paid_at=? WHERE id=?",
-               (_now(), voucher_id))
-    already = db.execute(
-        "SELECT COUNT(*) c FROM ledger_entries WHERE voucher_id=? AND credit>0",
-        (voucher_id,)).fetchone()["c"]
-    if not already:  # credit exactly once
-        channel = v.get("payment_channel") or "Bank"
-        ledger_add(db, v, _today(), f"Payment received — {channel}", credit=v["amount"] or 0)
-    # --- v0.11: a verified repeat voucher activates its repeat request
-    # (request -> Enrolled + the target-session enrollment). Runs inside
-    # the same commit; the helper is a no-op unless the request is still
-    # 'Approved', so re-verification can never double-activate. ---
-    if v.get("repeat_request_id"):
-        activate_repeat_request(db, v["repeat_request_id"])
+    _apply_voucher_verify(db, v)
     db.commit()
     log_audit("voucher_verified",
                 f"Challan {v['challan_no']} — Rs {v['amount']:,}")
     flash(f"Voucher {v['challan_no']} verified — marked Paid.", "ok")
     return redirect(url_for("admin_voucher_detail", voucher_id=voucher_id))
+
+
+@app.route("/admin/vouchers/bulk", methods=["POST"])
+@role_required("admin")
+def admin_vouchers_bulk():
+    """Bulk verify / reject for the Proof Submitted vouchers ticked on
+    the list page (current page only). Verify reuses
+    _apply_voucher_verify, so a bulk verify produces exactly the same
+    ledger outcome as verifying each proof one by one; reject reuses
+    the single-reject update (status back to Pending) with the bulk
+    remark, or the single-reject default when no remark is given.
+    Rows in any other status are skipped and reported, never changed."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    action = request.form.get("bulk_action", "")
+    remark = request.form.get("remark", "").strip()
+    if not ids:
+        flash("No vouchers selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_vouchers"))
+    if action not in ("verify", "reject"):
+        flash("Invalid bulk action.", "error")
+        return redirect(url_for("admin_vouchers"))
+    done, skipped = 0, []
+    try:
+        for vid in ids:
+            v = get_voucher(db, vid)
+            if not v:
+                skipped.append((vid, "not found"))
+                continue
+            if v["status"] != "Proof Submitted":
+                skipped.append((vid, f"status is {v['status']}"))
+                continue
+            if action == "verify":
+                _apply_voucher_verify(db, v)
+            else:
+                db.execute(
+                    "UPDATE vouchers SET status='Pending', remarks=? "
+                    "WHERE id=?",
+                    (remark or "Paid proof rejected — please upload a clear copy.",
+                     vid))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk voucher action failed — nothing was changed.", "error")
+        return redirect(url_for("admin_vouchers"))
+    log_audit("bulk_voucher_verified" if action == "verify"
+              else "bulk_voucher_rejected",
+              f"{done} voucher(s); {len(skipped)} skipped")
+    _bulk_flash("voucher " + ("verify" if action == "verify" else "reject"),
+                done, skipped)
+    return redirect(url_for("admin_vouchers"))
 
 
 @app.route("/admin/vouchers/<int:voucher_id>/reject", methods=["POST"])
@@ -5088,6 +5221,65 @@ def admin_document_reject(doc_id):
     return redirect(url_for("admin_documents"))
 
 
+@app.route("/admin/documents/bulk", methods=["POST"])
+@role_required("admin")
+def admin_documents_bulk():
+    """Bulk verify / reject for the Pending documents ticked on the
+    list page (current page only). Same updates as the single verify /
+    reject routes (status, remarks, reviewed_at, reviewed_by); the
+    bulk remarks field applies to every row, falling back to the
+    single-route defaults. Rows in any other status are skipped and
+    reported, never changed."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    action = request.form.get("bulk_action", "")
+    remarks = request.form.get("remarks", "").strip()
+    if not ids:
+        flash("No documents selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_documents"))
+    if action not in ("verify", "reject"):
+        flash("Invalid bulk action.", "error")
+        return redirect(url_for("admin_documents"))
+    done, skipped = 0, []
+    try:
+        for doc_id in ids:
+            doc = db.execute("SELECT * FROM student_documents WHERE id=?",
+                             (doc_id,)).fetchone()
+            if not doc:
+                skipped.append((doc_id, "not found"))
+                continue
+            if doc["status"] != "Pending":
+                skipped.append((doc_id, f"status is {doc['status']}"))
+                continue
+            if action == "verify":
+                db.execute(
+                    "UPDATE student_documents SET status='Verified', "
+                    "admin_remarks=?, reviewed_at=?, reviewed_by=? "
+                    "WHERE id=?",
+                    (remarks or doc.get("admin_remarks"), _now(),
+                     session.get("display_name"), doc_id))
+            else:
+                db.execute(
+                    "UPDATE student_documents SET status='Rejected', "
+                    "admin_remarks=?, reviewed_at=?, reviewed_by=? "
+                    "WHERE id=?",
+                    (remarks or "Document rejected — please upload a clear, readable copy.",
+                     _now(), session.get("display_name"), doc_id))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk document action failed — nothing was changed.", "error")
+        return redirect(url_for("admin_documents"))
+    log_audit("bulk_document_verified" if action == "verify"
+              else "bulk_document_rejected",
+              f"{done} document(s); {len(skipped)} skipped")
+    _bulk_flash("document " + ("verify" if action == "verify" else "reject"),
+                done, skipped)
+    return redirect(url_for("admin_documents"))
+
+
 # --------------------------------------------------------- support tickets
 def _ticket_full(db, ticket_id):
     return db.execute(
@@ -5266,6 +5458,50 @@ def admin_ticket_status(ticket_id):
     return redirect(url_for("admin_ticket_thread", ticket_id=ticket_id))
 
 
+@app.route("/admin/tickets/bulk", methods=["POST"])
+@role_required("admin")
+def admin_tickets_bulk():
+    """Bulk close / reopen for the tickets ticked on the list page
+    (current page only). Same update as the single status route
+    (status + updated_at); a ticket already in the target status is
+    skipped and reported, never rewritten."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    target = request.form.get("target", "")
+    if not ids:
+        flash("No tickets selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_tickets"))
+    if target not in ("Closed", "Open"):
+        flash("Bulk ticket action supports Close and Reopen only.", "error")
+        return redirect(url_for("admin_tickets"))
+    done, skipped = 0, []
+    try:
+        for tid in ids:
+            ticket = db.execute("SELECT id, status FROM tickets WHERE id=?",
+                                (tid,)).fetchone()
+            if not ticket:
+                skipped.append((tid, "not found"))
+                continue
+            if ticket["status"] == target:
+                skipped.append((tid, f"already {target}"))
+                continue
+            db.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
+                       (target, _now(), tid))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk ticket action failed — nothing was changed.", "error")
+        return redirect(url_for("admin_tickets"))
+    log_audit("bulk_ticket_closed" if target == "Closed"
+              else "bulk_ticket_reopened",
+              f"{done} ticket(s); {len(skipped)} skipped")
+    _bulk_flash("ticket " + ("close" if target == "Closed" else "reopen"),
+                done, skipped)
+    return redirect(url_for("admin_tickets"))
+
+
 # ------------------------------------------------------ notifications admin
 @app.route("/admin/notifications")
 @role_required("admin")
@@ -5351,6 +5587,56 @@ def admin_notification_toggle(notif_id):
               f"Notification '{notif['title']}'")
     flash(f"Notification '{notif['title']}' is now "
           f"{'Published' if new_state else 'Unpublished'}.", "ok")
+    return redirect(url_for("admin_notifications"))
+
+
+@app.route("/admin/notifications/bulk", methods=["POST"])
+@role_required("admin")
+def admin_notifications_bulk():
+    """Bulk publish / unpublish for the notifications ticked on the
+    list page. Same update as the single toggle route, applied to an
+    explicit target state: publishing stamps published_at with today,
+    unpublishing keeps the existing published_at. Rows already in the
+    target state are skipped and reported, never rewritten."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    action = request.form.get("bulk_action", "")
+    if not ids:
+        flash("No notifications selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_notifications"))
+    if action not in ("publish", "unpublish"):
+        flash("Invalid bulk action.", "error")
+        return redirect(url_for("admin_notifications"))
+    new_state = 1 if action == "publish" else 0
+    done, skipped = 0, []
+    try:
+        for nid in ids:
+            notif = db.execute("SELECT * FROM notifications WHERE id=?",
+                               (nid,)).fetchone()
+            if not notif:
+                skipped.append((nid, "not found"))
+                continue
+            if (notif.get("is_published") or 0) == new_state:
+                skipped.append((nid, "already "
+                                + ("Published" if new_state else "Unpublished")))
+                continue
+            db.execute(
+                "UPDATE notifications SET is_published=?, published_at=? "
+                "WHERE id=?",
+                (new_state, _today() if new_state else notif.get("published_at"),
+                 nid))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk notification action failed — nothing was changed.",
+              "error")
+        return redirect(url_for("admin_notifications"))
+    log_audit("bulk_notification_published" if new_state
+              else "bulk_notification_unpublished",
+              f"{done} notification(s); {len(skipped)} skipped")
+    _bulk_flash("notification " + action, done, skipped)
     return redirect(url_for("admin_notifications"))
 
 
@@ -7354,6 +7640,75 @@ def admin_repeat_reject(req_id):
     log_audit("repeat_request_rejected", f"Request #{req_id}")
     flash("Repeat request rejected.", "ok")
     return back
+
+
+@app.route("/admin/repeat/bulk", methods=["POST"])
+@role_required("admin")
+def admin_repeat_bulk():
+    """Bulk approve / reject for the Requested repeat requests ticked
+    on the list page. Approve reuses create_repeat_voucher plus the
+    single-approve update, so a bulk approval issues exactly the same
+    voucher as approving one by one; reject reuses the single-reject
+    update with the shared bulk remarks (required, exactly as the
+    single route requires remarks). Requests in any other status are
+    skipped and reported, never changed."""
+    db = get_db()
+    ids = _parse_bulk_ids(request.form)
+    action = request.form.get("bulk_action", "")
+    remarks = request.form.get("remarks", "").strip()
+    if not ids:
+        flash("No requests selected — tick at least one row first.",
+              "error")
+        return redirect(url_for("admin_repeat"))
+    if action not in ("approve", "reject"):
+        flash("Invalid bulk action.", "error")
+        return redirect(url_for("admin_repeat"))
+    if action == "reject" and not remarks:
+        flash("Remarks are required when rejecting — the students need "
+              "to know why.", "error")
+        return redirect(url_for("admin_repeat"))
+    done, skipped = 0, []
+    try:
+        for req_id in ids:
+            req = db.execute("SELECT * FROM repeat_requests WHERE id=?",
+                             (req_id,)).fetchone()
+            if not req:
+                skipped.append((req_id, "not found"))
+                continue
+            if req["status"] != "Requested":
+                skipped.append((req_id, f"status is {req['status']}"))
+                continue
+            if action == "approve":
+                student = db.execute("SELECT * FROM students WHERE id=?",
+                                     (req["student_id"],)).fetchone()
+                course = db.execute("SELECT * FROM courses WHERE id=?",
+                                    (req["course_id"],)).fetchone()
+                if not student or not course:
+                    skipped.append((req_id, "student or course missing"))
+                    continue
+                vid = create_repeat_voucher(db, req, student, course)
+                db.execute(
+                    """UPDATE repeat_requests SET status='Approved',
+                       voucher_id=?, decided_by=?, decided_at=? WHERE id=?""",
+                    (vid, session.get("display_name"), _now(), req_id))
+            else:
+                db.execute(
+                    """UPDATE repeat_requests SET status='Rejected',
+                       admin_remarks=?, decided_by=?, decided_at=?
+                       WHERE id=?""",
+                    (remarks, session.get("display_name"), _now(), req_id))
+            done += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        flash("Bulk repeat action failed — nothing was changed.", "error")
+        return redirect(url_for("admin_repeat"))
+    log_audit("bulk_repeat_approved" if action == "approve"
+              else "bulk_repeat_rejected",
+              f"{done} request(s); {len(skipped)} skipped")
+    _bulk_flash("repeat " + ("approve" if action == "approve" else "reject"),
+                done, skipped)
+    return redirect(url_for("admin_repeat"))
 
 
 # ================================================================ v0.12 TIMETABLE + TRANSPORT

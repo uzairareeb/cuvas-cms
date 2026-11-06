@@ -647,3 +647,49 @@ footer { color: var(--adm-muted); }
   .dash, .dash-kpi, .dash-spin { animation: none !important; }
   .dash-kpi, .dash-action { transition: none !important; }
 }
+
+/* ---- soft-touch polish (admin only): soften the classic look without
+   changing layout or the indigo identity. Slightly larger card radius,
+   softer shadows, lighter borders, consistent card padding, and a
+   gentle table row hover. No metallic accent, no new colour family. ---- */
+.layout.admin-layout .card {
+  border-radius: 16px;
+  border-color: #e6eaf5;
+  box-shadow: 0 2px 12px rgba(46, 49, 146, .05);
+  padding: 20px;
+}
+.layout.admin-layout .dash-card { border-radius: 16px; }
+.layout.admin-layout .form-card {
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(46, 49, 146, .05);
+}
+.layout.admin-layout .filter-bar { border-radius: 12px; }
+.layout.admin-layout table tr:hover td { background: #f4f7fb; }
+.layout.admin-layout .btn { transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+.layout.admin-layout .btn:hover { box-shadow: 0 4px 14px rgba(46, 49, 146, .16); }
+
+/* ---- off-theme chrome fix: the vouchers KPI cards used legacy
+   accent top borders from the shared stylesheet. In the admin
+   scope they now use indigo-family tones, matching every other KPI. ---- */
+.layout.admin-layout .kpi.indigo-soft { border-top-color: #6c72c9; }
+.layout.admin-layout .kpi.indigo-dark { border-top-color: var(--adm-blue-dark); }
+
+/* ---- bulk bar (admin list pages only) ---- */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: #eef0fa;
+  border: 1px solid var(--adm-line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+.bulk-bar .bulk-count { font-weight: 700; color: var(--adm-navy); }
+.bulk-check, .bulk-select-all {
+  accent-color: var(--adm-blue);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
